@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import logging
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.audit import AuditLog
 
 logger = logging.getLogger(__name__)
 
@@ -21,22 +23,16 @@ async def log_audit_event(
 ) -> None:
     """Log an audit event to the audit_log table."""
     try:
-        await db.execute(
-            text(
-                """
-                INSERT INTO audit_log (user_id, action, resource_type, resource_id, ip_address, details)
-                VALUES (:user_id, :action, :resource_type, :resource_id, :ip_address, :details::jsonb)
-                """
-            ),
-            {
-                "user_id": str(user_id) if user_id else None,
-                "action": action,
-                "resource_type": resource_type,
-                "resource_id": str(resource_id) if resource_id else None,
-                "ip_address": ip_address,
-                "details": str(details) if details else None,
-            },
+        entry = AuditLog(
+            user_id=user_id,
+            action=action,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            ip_address=ip_address,
+            details=details,
         )
+        db.add(entry)
         await db.commit()
     except Exception:
         logger.exception("Failed to write audit log entry")
+        await db.rollback()
