@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { useEffect, useState } from "react";
 
 interface AuthState {
   accessToken: string | null;
@@ -25,3 +26,18 @@ export const useAuthStore = create<AuthState>()(
     { name: "medtimeline-auth" }
   )
 );
+
+export function useHasHydrated() {
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => {
+    const unsub = useAuthStore.persist.onFinishHydration(() => {
+      setHydrated(true);
+    });
+    // If already hydrated
+    if (useAuthStore.persist.hasHydrated()) {
+      setHydrated(true);
+    }
+    return () => unsub();
+  }, []);
+  return hydrated;
+}

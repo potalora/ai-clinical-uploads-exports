@@ -1,30 +1,38 @@
 from __future__ import annotations
 
 from datetime import datetime
-from uuid import UUID
+from typing import Any
 
 from pydantic import BaseModel
 
 
 class UploadResponse(BaseModel):
-    id: UUID
+    upload_id: str
+    status: str
+    records_inserted: int
+    errors: list[Any] = []
+
+
+class UploadStatusResponse(BaseModel):
+    upload_id: str
     filename: str
     ingestion_status: str
     record_count: int
-    created_at: datetime
+    ingestion_progress: dict = {}
+    ingestion_errors: list[Any] = []
+    processing_started_at: datetime | None = None
+    processing_completed_at: datetime | None = None
 
-    model_config = {"from_attributes": True}
 
-
-class IngestionStatusResponse(BaseModel):
-    id: UUID
+class UploadHistoryItem(BaseModel):
+    id: str
     filename: str
     ingestion_status: str
-    ingestion_progress: dict
-    ingestion_errors: list
     record_count: int
-    total_file_count: int
-    processing_started_at: datetime | None
-    processing_completed_at: datetime | None
+    file_size_bytes: int | None = None
+    created_at: str | None = None
 
-    model_config = {"from_attributes": True}
+
+class UploadHistoryResponse(BaseModel):
+    items: list[UploadHistoryItem]
+    total: int

@@ -1,7 +1,17 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
 
-interface FetchOptions extends RequestInit {
-  token?: string;
+function getToken(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const stored = localStorage.getItem("medtimeline-auth");
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      return parsed?.state?.accessToken || null;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
 }
 
 class ApiClient {
@@ -13,16 +23,21 @@ class ApiClient {
 
   private async request<T>(
     endpoint: string,
-    options: FetchOptions = {}
+    options: RequestInit & { token?: string } = {}
   ): Promise<T> {
     const { token, ...fetchOptions } = options;
+    const authToken = token || getToken();
     const headers: Record<string, string> = {
-      "Content-Type": "application/json",
       ...(options.headers as Record<string, string>),
     };
 
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
+    if (authToken) {
+      headers["Authorization"] = `Bearer ${authToken}`;
+    }
+
+    // Only set Content-Type for non-FormData
+    if (!(options.body instanceof FormData)) {
+      headers["Content-Type"] = "application/json";
     }
 
     const response = await fetch(`${this.baseUrl}${endpoint}`, {
@@ -50,6 +65,14 @@ class ApiClient {
     return this.request<T>(endpoint, {
       method: "POST",
       body: body ? JSON.stringify(body) : undefined,
+      token,
+    });
+  }
+
+  async postForm<T>(endpoint: string, formData: FormData, token?: string): Promise<T> {
+    return this.request<T>(endpoint, {
+      method: "POST",
+      body: formData,
       token,
     });
   }
