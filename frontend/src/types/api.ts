@@ -116,6 +116,64 @@ export interface PromptResponse {
   generated_at: string;
 }
 
+export interface ExtractedEntity {
+  entity_class: string;
+  text: string;
+  attributes: Record<string, string>;
+  start_pos: number | null;
+  end_pos: number | null;
+  confidence: number;
+}
+
+export interface ExtractionResult {
+  upload_id: string;
+  status: string;
+  extracted_text_preview: string | null;
+  entities: ExtractedEntity[];
+  error: string | null;
+}
+
+export interface UnstructuredUploadResponse {
+  upload_id: string;
+  status: string;
+  file_type: string;
+}
+
+export interface DuplicateWarning {
+  total_records: number;
+  deduped_records: number;
+  duplicates_excluded: number;
+  message: string | null;
+}
+
+export interface GenerateSummaryRequest {
+  patient_id: string;
+  summary_type: string;
+  category?: string;
+  date_from?: string;
+  date_to?: string;
+  output_format: string;
+  custom_system_prompt?: string;
+  custom_user_prompt?: string;
+}
+
+export interface GenerateSummaryResponse {
+  id: string;
+  natural_language: string | null;
+  json_data: Record<string, unknown> | null;
+  record_count: number;
+  duplicate_warning: DuplicateWarning | null;
+  de_identification_report: Record<string, number> | null;
+  model_used: string;
+  generated_at: string;
+}
+
+export interface PatientInfo {
+  id: string;
+  fhir_id: string | null;
+  gender: string | null;
+}
+
 export interface DedupCandidate {
   id: string;
   similarity_score: number;

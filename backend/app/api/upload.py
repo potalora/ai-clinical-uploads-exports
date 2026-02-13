@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, status
 from sqlalchemy import select
@@ -13,8 +15,17 @@ from app.config import settings
 from app.database import get_db
 from app.dependencies import get_authenticated_user_id
 from app.middleware.audit import log_audit_event
+from app.models.record import HealthRecord
 from app.models.uploaded_file import UploadedFile
-from app.schemas.upload import UploadHistoryResponse, UploadResponse, UploadStatusResponse
+from app.schemas.upload import (
+    ConfirmExtractionRequest,
+    ExtractedEntitySchema,
+    ExtractionResultResponse,
+    UnstructuredUploadResponse,
+    UploadHistoryResponse,
+    UploadResponse,
+    UploadStatusResponse,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/upload", tags=["upload"])
@@ -180,3 +191,248 @@ async def get_upload_history(
         })
 
     return UploadHistoryResponse(items=items, total=len(items))
+
+
+ALLOWED_UNSTRUCTURED = {".pdf", ".rtf", ".tif", ".tiff"}
+
+
+async def _process_unstructured(upload_id: UUID, file_path: Path, user_id: UUID) -> None:
+    """Background task: extract text then entities from an unstructured file."""
+    from app.database import async_session_factory
+    from app.services.extraction.text_extractor import extract_text
+    from app.services.extraction.entity_extractor import extract_entities_async
+
+    async with async_session_factory() as db:
+        result = await db.execute(
+            select(UploadedFile).where(UploadedFile.id == upload_id)
+        )
+        upload = result.scalar_one_or_none()
+        if not upload:
+            return
+
+        try:
+            upload.processing_started_at = datetime.now(timezone.utc)
+            upload.ingestion_status = "processing"
+            await db.commit()
+
+            # Step 1: Extract text
+            text, file_type = await extract_text(file_path, settings.gemini_api_key)
+            upload.extracted_text = text
+            await db.commit()
+
+            # Step 2: Extract entities
+            extraction = await extract_entities_async(
+                text, upload.filename, settings.gemini_api_key
+            )
+
+            if extraction.error:
+                upload.ingestion_status = "failed"
+                upload.ingestion_errors = [{"error": extraction.error}]
+            else:
+                entities_json = [
+                    {
+                        "entity_class": e.entity_class,
+                        "text": e.text,
+                        "attributes": e.attributes,
+                        "start_pos": e.start_pos,
+                        "end_pos": e.end_pos,
+                        "confidence": e.confidence,
+                    }
+                    for e in extraction.entities
+                ]
+                upload.extraction_entities = entities_json
+                upload.ingestion_status = "awaiting_confirmation"
+
+            upload.processing_completed_at = datetime.now(timezone.utc)
+            await db.commit()
+
+        except Exception as e:
+            logger.error("Unstructured processing failed for %s: %s", upload_id, e)
+            upload.ingestion_status = "failed"
+            upload.ingestion_errors = [{"error": str(e)}]
+            upload.processing_completed_at = datetime.now(timezone.utc)
+            await db.commit()
+
+
+@router.post(
+    "/unstructured",
+    response_model=UnstructuredUploadResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def upload_unstructured(
+    file: UploadFile,
+    background_tasks: BackgroundTasks,
+    user_id: UUID = Depends(get_authenticated_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> UnstructuredUploadResponse:
+    """Upload a PDF, RTF, or TIFF for AI-powered text and entity extraction."""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename provided")
+
+    ext = Path(file.filename).suffix.lower()
+    if ext not in ALLOWED_UNSTRUCTURED:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type: {ext}. Allowed: {', '.join(ALLOWED_UNSTRUCTURED)}",
+        )
+
+    upload_dir = Path(settings.upload_dir)
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    file_path = upload_dir / f"{user_id}_{file.filename}"
+    content = await file.read()
+    if len(content) > settings.max_file_size_mb * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large")
+
+    with open(file_path, "wb") as f:
+        f.write(content)
+
+    file_hash = hashlib.sha256(content).hexdigest()
+
+    upload_record = UploadedFile(
+        id=uuid4(),
+        user_id=user_id,
+        filename=file.filename,
+        mime_type=file.content_type or "application/octet-stream",
+        file_size_bytes=len(content),
+        file_hash=file_hash,
+        storage_path=str(file_path),
+        ingestion_status="processing",
+        file_category="unstructured",
+    )
+    db.add(upload_record)
+    await db.commit()
+    await db.refresh(upload_record)
+
+    await log_audit_event(
+        db,
+        user_id=user_id,
+        action="file.upload.unstructured",
+        resource_type="uploaded_file",
+        resource_id=upload_record.id,
+        details={"filename": file.filename, "file_type": ext},
+    )
+
+    background_tasks.add_task(_process_unstructured, upload_record.id, file_path, user_id)
+
+    from app.services.extraction.text_extractor import detect_file_type
+    file_type = detect_file_type(file_path)
+
+    return UnstructuredUploadResponse(
+        upload_id=str(upload_record.id),
+        status="processing",
+        file_type=file_type.value,
+    )
+
+
+@router.get("/{upload_id}/extraction", response_model=ExtractionResultResponse)
+async def get_extraction_results(
+    upload_id: UUID,
+    user_id: UUID = Depends(get_authenticated_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> ExtractionResultResponse:
+    """Get extraction results for an unstructured upload."""
+    result = await db.execute(
+        select(UploadedFile).where(
+            UploadedFile.id == upload_id,
+            UploadedFile.user_id == user_id,
+        )
+    )
+    upload = result.scalar_one_or_none()
+    if not upload:
+        raise HTTPException(status_code=404, detail="Upload not found")
+
+    entities = []
+    if upload.extraction_entities:
+        entities = [
+            ExtractedEntitySchema(**e) for e in upload.extraction_entities
+        ]
+
+    preview = None
+    if upload.extracted_text:
+        preview = upload.extracted_text[:500]
+
+    error = None
+    if upload.ingestion_errors:
+        errors = upload.ingestion_errors
+        if errors and isinstance(errors, list) and len(errors) > 0:
+            error = errors[0].get("error", str(errors[0])) if isinstance(errors[0], dict) else str(errors[0])
+
+    return ExtractionResultResponse(
+        upload_id=str(upload.id),
+        status=upload.ingestion_status,
+        extracted_text_preview=preview,
+        entities=entities,
+        error=error,
+    )
+
+
+@router.post("/{upload_id}/confirm-extraction")
+async def confirm_extraction(
+    upload_id: UUID,
+    body: ConfirmExtractionRequest,
+    user_id: UUID = Depends(get_authenticated_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Confirm extracted entities and save them as HealthRecords."""
+    result = await db.execute(
+        select(UploadedFile).where(
+            UploadedFile.id == upload_id,
+            UploadedFile.user_id == user_id,
+        )
+    )
+    upload = result.scalar_one_or_none()
+    if not upload:
+        raise HTTPException(status_code=404, detail="Upload not found")
+
+    if not body.patient_id:
+        raise HTTPException(status_code=400, detail="patient_id is required")
+
+    from app.services.extraction.entity_extractor import ExtractedEntity
+    from app.services.extraction.entity_to_fhir import entity_to_health_record_dict
+
+    patient_uuid = UUID(body.patient_id)
+    created_count = 0
+
+    for entity_data in body.confirmed_entities:
+        entity = ExtractedEntity(
+            entity_class=entity_data.entity_class,
+            text=entity_data.text,
+            attributes=entity_data.attributes,
+            start_pos=entity_data.start_pos,
+            end_pos=entity_data.end_pos,
+            confidence=entity_data.confidence,
+        )
+
+        record_dict = entity_to_health_record_dict(
+            entity=entity,
+            user_id=user_id,
+            patient_id=patient_uuid,
+            source_file_id=upload_id,
+        )
+        if record_dict is None:
+            continue
+
+        health_record = HealthRecord(**record_dict)
+        db.add(health_record)
+        created_count += 1
+
+    upload.ingestion_status = "completed"
+    upload.record_count = created_count
+    upload.processing_completed_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    await log_audit_event(
+        db,
+        user_id=user_id,
+        action="extraction.confirm",
+        resource_type="uploaded_file",
+        resource_id=upload_id,
+        details={"records_created": created_count, "patient_id": body.patient_id},
+    )
+
+    return {
+        "upload_id": str(upload_id),
+        "records_created": created_count,
+        "status": "completed",
+    }

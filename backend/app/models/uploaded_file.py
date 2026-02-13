@@ -34,3 +34,8 @@ class UploadedFile(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     processing_completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    file_category: Mapped[str] = mapped_column(
+        Text, default="structured", server_default="structured"
+    )
+    extracted_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    extraction_entities: Mapped[list | None] = mapped_column(JSONB, nullable=True)

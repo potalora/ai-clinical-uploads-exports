@@ -11,7 +11,14 @@ from app.database import get_db
 from app.dependencies import get_authenticated_user_id
 from app.models.ai_summary import AISummaryPrompt
 from app.models.patient import Patient
-from app.schemas.summary import BuildPromptRequest, PasteResponseRequest, PromptResponse
+from app.schemas.summary import (
+    BuildPromptRequest,
+    GenerateSummaryRequest,
+    GenerateSummaryResponse,
+    DuplicateWarning,
+    PasteResponseRequest,
+    PromptResponse,
+)
 from app.services.ai.prompt_builder import build_prompt
 
 router = APIRouter(prefix="/summary", tags=["summary"])
@@ -206,3 +213,100 @@ async def list_responses(
         ],
         "total": len(prompts),
     }
+
+
+@router.post("/generate", response_model=GenerateSummaryResponse)
+async def generate_summary_endpoint(
+    body: GenerateSummaryRequest,
+    user_id: UUID = Depends(get_authenticated_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> GenerateSummaryResponse:
+    """Generate an AI summary by calling Gemini 3 Flash."""
+    # Verify patient belongs to user
+    result = await db.execute(
+        select(Patient).where(Patient.id == body.patient_id, Patient.user_id == user_id)
+    )
+    patient = result.scalar_one_or_none()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    from app.services.ai.summarizer import generate_summary
+
+    try:
+        summary_data = await generate_summary(
+            db=db,
+            user_id=user_id,
+            patient_id=body.patient_id,
+            summary_type=body.summary_type,
+            category=body.category,
+            date_from=body.date_from,
+            date_to=body.date_to,
+            output_format=body.output_format,
+            custom_system_prompt=body.custom_system_prompt,
+            custom_user_prompt=body.custom_user_prompt,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    import json
+
+    # Store in DB
+    response_text = summary_data.get("natural_language") or ""
+    if summary_data.get("json_data"):
+        if response_text:
+            response_text += "\n\n---JSON---\n" + json.dumps(summary_data["json_data"], indent=2)
+        else:
+            response_text = json.dumps(summary_data["json_data"], indent=2)
+
+    prompt_record = AISummaryPrompt(
+        id=uuid4(),
+        user_id=user_id,
+        patient_id=body.patient_id,
+        summary_type=body.summary_type,
+        scope_filter={
+            "category": body.category,
+            "date_from": body.date_from.isoformat() if body.date_from else None,
+            "date_to": body.date_to.isoformat() if body.date_to else None,
+            "output_format": body.output_format,
+        },
+        system_prompt=summary_data["system_prompt"],
+        user_prompt=summary_data["user_prompt"],
+        target_model=summary_data["model_used"],
+        suggested_config={
+            "temperature": 0.3,
+            "max_output_tokens": 8192,
+        },
+        record_count=summary_data["record_count"],
+        de_identification_log=summary_data["de_identification_report"],
+        response_text=response_text,
+        response_pasted_at=datetime.now(timezone.utc),
+        response_source="api",
+        response_format=body.output_format,
+        api_model_used=summary_data["model_used"],
+        api_tokens_used=summary_data.get("tokens_used"),
+        generated_at=datetime.now(timezone.utc),
+    )
+    db.add(prompt_record)
+    await db.commit()
+    await db.refresh(prompt_record)
+
+    dup_warning = None
+    if summary_data.get("duplicate_warning"):
+        dw = summary_data["duplicate_warning"]
+        dup_warning = DuplicateWarning(
+            total_records=dw["total_records"],
+            deduped_records=dw["deduped_records"],
+            duplicates_excluded=dw["duplicates_excluded"],
+            message=dw.get("message"),
+        )
+
+    return GenerateSummaryResponse(
+        id=prompt_record.id,
+        natural_language=summary_data.get("natural_language"),
+        json_data=summary_data.get("json_data"),
+        record_count=summary_data["record_count"],
+        duplicate_warning=dup_warning,
+        de_identification_report=summary_data["de_identification_report"],
+        model_used=summary_data["model_used"],
+        generated_at=prompt_record.generated_at,
+    )

@@ -31,3 +31,34 @@ class PromptResponse(BaseModel):
 class PasteResponseRequest(BaseModel):
     prompt_id: UUID
     response_text: str
+
+
+class GenerateSummaryRequest(BaseModel):
+    patient_id: UUID
+    summary_type: str = "full"
+    category: str | None = None
+    date_from: datetime | None = None
+    date_to: datetime | None = None
+    output_format: str = "natural_language"  # "natural_language", "json", "both"
+    custom_system_prompt: str | None = None
+    custom_user_prompt: str | None = None
+
+
+class DuplicateWarning(BaseModel):
+    total_records: int
+    deduped_records: int
+    duplicates_excluded: int
+    message: str | None = None
+
+
+class GenerateSummaryResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    id: UUID
+    natural_language: str | None = None
+    json_data: dict | None = None
+    record_count: int
+    duplicate_warning: DuplicateWarning | None = None
+    de_identification_report: dict | None = None
+    model_used: str
+    generated_at: datetime

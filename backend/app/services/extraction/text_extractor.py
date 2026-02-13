@@ -1,0 +1,100 @@
+from __future__ import annotations
+
+import logging
+from enum import Enum
+from pathlib import Path
+
+from google import genai
+from google.genai import types
+from PIL import Image
+from striprtf.striprtf import rtf_to_text
+
+from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+
+class FileType(str, Enum):
+    PDF = "pdf"
+    RTF = "rtf"
+    TIFF = "tiff"
+    UNKNOWN = "unknown"
+
+
+SUPPORTED_EXTENSIONS = {
+    ".pdf": FileType.PDF,
+    ".rtf": FileType.RTF,
+    ".tif": FileType.TIFF,
+    ".tiff": FileType.TIFF,
+}
+
+
+def detect_file_type(file_path: Path) -> FileType:
+    """Detect unstructured file type by extension."""
+    ext = file_path.suffix.lower()
+    return SUPPORTED_EXTENSIONS.get(ext, FileType.UNKNOWN)
+
+
+def extract_text_from_rtf(file_path: Path) -> str:
+    """Extract plaintext from RTF using striprtf (local, no API)."""
+    raw = file_path.read_text(encoding="utf-8", errors="replace")
+    return rtf_to_text(raw)
+
+
+async def extract_text_from_pdf(file_path: Path, api_key: str) -> str:
+    """Extract text from PDF by sending bytes to Gemini 3 Flash."""
+    client = genai.Client(api_key=api_key)
+    with open(file_path, "rb") as f:
+        pdf_bytes = f.read()
+
+    response = client.models.generate_content(
+        model=settings.gemini_model,
+        contents=[
+            types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"),
+            "Extract all text from this document faithfully. Preserve structure, tables, and formatting. Return only the extracted text, no commentary.",
+        ],
+    )
+    return response.text or ""
+
+
+async def extract_text_from_tiff(file_path: Path, api_key: str) -> str:
+    """Extract text from TIFF image via Gemini 3 Flash OCR."""
+    client = genai.Client(api_key=api_key)
+    img = Image.open(file_path)
+
+    response = client.models.generate_content(
+        model=settings.gemini_model,
+        contents=[
+            img,
+            "Extract all text from this scanned document. Preserve the original layout and structure. Return only the extracted text, no commentary.",
+        ],
+    )
+    return response.text or ""
+
+
+async def extract_text(file_path: Path, api_key: str) -> tuple[str, FileType]:
+    """Dispatch to the appropriate text extractor based on file type.
+
+    Returns:
+        tuple: (extracted_text, file_type)
+
+    Raises:
+        ValueError: If the file type is unsupported.
+    """
+    file_type = detect_file_type(file_path)
+    if file_type == FileType.UNKNOWN:
+        raise ValueError(f"Unsupported file type: {file_path.suffix}")
+
+    logger.info("Extracting text from %s (type=%s)", file_path.name, file_type.value)
+
+    if file_type == FileType.RTF:
+        text = extract_text_from_rtf(file_path)
+    elif file_type == FileType.PDF:
+        text = await extract_text_from_pdf(file_path, api_key)
+    elif file_type == FileType.TIFF:
+        text = await extract_text_from_tiff(file_path, api_key)
+    else:
+        raise ValueError(f"Unsupported file type: {file_type}")
+
+    logger.info("Extracted %d characters from %s", len(text), file_path.name)
+    return text, file_type

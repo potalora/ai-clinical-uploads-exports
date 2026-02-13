@@ -140,3 +140,27 @@ async def get_labs_dashboard(
         })
 
     return {"items": items, "total": len(items)}
+
+
+@router.get("/patients")
+async def get_patients(
+    user_id: UUID = Depends(get_authenticated_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """List patients belonging to the current user."""
+    result = await db.execute(
+        select(Patient).where(Patient.user_id == user_id)
+    )
+    patients = result.scalars().all()
+
+    return {
+        "items": [
+            {
+                "id": str(p.id),
+                "fhir_id": p.fhir_id,
+                "gender": p.gender,
+            }
+            for p in patients
+        ],
+        "total": len(patients),
+    }

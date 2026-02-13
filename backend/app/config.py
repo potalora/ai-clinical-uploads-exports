@@ -21,11 +21,18 @@ class Settings(BaseSettings):
     jwt_access_token_expire_minutes: int = 15
     jwt_refresh_token_expire_days: int = 7
 
-    # AI Prompt Builder (NO API keys)
+    # AI Prompt Builder
     prompt_target_model: str = "gemini-3-flash-preview"
     prompt_suggested_temperature: float = 0.3
     prompt_suggested_max_tokens: int = 4096
     prompt_suggested_thinking_level: str = "low"
+
+    # Gemini API
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-3-flash-preview"
+    gemini_extraction_model: str = "gemini-2.5-flash"
+    gemini_summary_temperature: float = 0.3
+    gemini_summary_max_tokens: int = 8192
 
     # Redis
     redis_url: str = "redis://localhost:6379/0"

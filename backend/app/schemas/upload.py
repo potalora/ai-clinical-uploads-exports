@@ -37,3 +37,31 @@ class UploadHistoryItem(BaseModel):
 class UploadHistoryResponse(BaseModel):
     items: list[UploadHistoryItem]
     total: int
+
+
+class UnstructuredUploadResponse(BaseModel):
+    upload_id: str
+    status: str
+    file_type: str
+
+
+class ExtractedEntitySchema(BaseModel):
+    entity_class: str
+    text: str
+    attributes: dict = {}
+    start_pos: int | None = None
+    end_pos: int | None = None
+    confidence: float = 0.8
+
+
+class ExtractionResultResponse(BaseModel):
+    upload_id: str
+    status: str
+    extracted_text_preview: str | None = None
+    entities: list[ExtractedEntitySchema] = []
+    error: str | None = None
+
+
+class ConfirmExtractionRequest(BaseModel):
+    confirmed_entities: list[ExtractedEntitySchema]
+    patient_id: str

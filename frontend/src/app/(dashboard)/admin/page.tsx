@@ -13,6 +13,10 @@ import type {
   DedupCandidate,
   UserResponse,
   DashboardOverview,
+  UnstructuredUploadResponse,
+  ExtractionResult,
+  ExtractedEntity,
+  PatientInfo,
 } from "@/types/api";
 import { RECORD_TYPE_COLORS, RECORD_TYPE_LABELS, DEFAULT_RECORD_COLOR } from "@/lib/constants";
 import { GlowText } from "@/components/retro/GlowText";
@@ -621,6 +625,352 @@ function UploadTab() {
                   </div>
                 </div>
               )}
+            </div>
+          </RetroCardContent>
+        </RetroCard>
+      )}
+
+      {/* Unstructured Upload Section */}
+      <UnstructuredUploadSection />
+    </div>
+  );
+}
+
+/* ==========================================
+   UNSTRUCTURED UPLOAD SECTION
+   ========================================== */
+
+function UnstructuredUploadSection() {
+  const [unstrFile, setUnstrFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadId, setUploadId] = useState<string | null>(null);
+  const [extraction, setExtraction] = useState<ExtractionResult | null>(null);
+  const [pollInterval, setPollInterval] = useState<ReturnType<typeof setInterval> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedEntities, setSelectedEntities] = useState<Set<number>>(new Set());
+  const [patients, setPatients] = useState<PatientInfo[]>([]);
+  const [selectedPatient, setSelectedPatient] = useState("");
+  const [confirming, setConfirming] = useState(false);
+  const [confirmResult, setConfirmResult] = useState<{records_created: number} | null>(null);
+
+  const onDropUnstr = useCallback((acceptedFiles: File[]) => {
+    if (acceptedFiles.length > 0) {
+      setUnstrFile(acceptedFiles[0]);
+      setExtraction(null);
+      setUploadId(null);
+      setError(null);
+      setConfirmResult(null);
+    }
+  }, []);
+
+  const { getRootProps: getUnstrRootProps, getInputProps: getUnstrInputProps, isDragActive: isUnstrDragActive } = useDropzone({
+    onDrop: onDropUnstr,
+    accept: {
+      "application/pdf": [".pdf"],
+      "application/rtf": [".rtf"],
+      "text/rtf": [".rtf"],
+      "image/tiff": [".tif", ".tiff"],
+    },
+    maxFiles: 1,
+    multiple: false,
+  });
+
+  // Load patients for selector
+  useEffect(() => {
+    (async () => {
+      try {
+        const data = await api.get<{ items: PatientInfo[] }>("/dashboard/patients");
+        setPatients(data.items);
+        if (data.items.length > 0) setSelectedPatient(data.items[0].id);
+      } catch { /* ignore */ }
+    })();
+  }, []);
+
+  // Poll for extraction results
+  useEffect(() => {
+    if (!uploadId) return;
+
+    const poll = setInterval(async () => {
+      try {
+        const data = await api.get<ExtractionResult>(`/upload/${uploadId}/extraction`);
+        setExtraction(data);
+
+        if (data.status === "awaiting_confirmation" || data.status === "completed" || data.status === "failed") {
+          clearInterval(poll);
+          setPollInterval(null);
+          if (data.entities.length > 0) {
+            setSelectedEntities(new Set(data.entities.map((_, i) => i)));
+          }
+          if (data.error) {
+            setError(data.error);
+          }
+        }
+      } catch {
+        clearInterval(poll);
+        setPollInterval(null);
+      }
+    }, 2000);
+
+    setPollInterval(poll);
+    return () => clearInterval(poll);
+  }, [uploadId]);
+
+  const handleUnstrUpload = async () => {
+    if (!unstrFile) return;
+    setUploading(true);
+    setError(null);
+    setExtraction(null);
+    setConfirmResult(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", unstrFile);
+      const resp = await api.postForm<UnstructuredUploadResponse>("/upload/unstructured", formData);
+      setUploadId(resp.upload_id);
+      setUnstrFile(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const toggleEntity = (index: number) => {
+    const next = new Set(selectedEntities);
+    if (next.has(index)) next.delete(index);
+    else next.add(index);
+    setSelectedEntities(next);
+  };
+
+  const handleConfirm = async () => {
+    if (!extraction || !selectedPatient) return;
+    setConfirming(true);
+    setError(null);
+
+    try {
+      const confirmed = extraction.entities
+        .filter((_, i) => selectedEntities.has(i))
+        .map(e => ({
+          entity_class: e.entity_class,
+          text: e.text,
+          attributes: e.attributes,
+          start_pos: e.start_pos,
+          end_pos: e.end_pos,
+          confidence: e.confidence,
+        }));
+
+      const resp = await api.post<{records_created: number}>(`/upload/${uploadId}/confirm-extraction`, {
+        confirmed_entities: confirmed,
+        patient_id: selectedPatient,
+      });
+      setConfirmResult(resp);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Confirmation failed");
+    } finally {
+      setConfirming(false);
+    }
+  };
+
+  const ENTITY_COLORS: Record<string, string> = {
+    medication: "var(--retro-amber)",
+    condition: "var(--retro-ochre)",
+    lab_result: "var(--retro-sage)",
+    vital: "var(--retro-sage)",
+    procedure: "#5a7a8c",
+    allergy: "var(--retro-terracotta)",
+    provider: "var(--retro-text-dim)",
+    dosage: "var(--retro-text-muted)",
+    route: "var(--retro-text-muted)",
+    frequency: "var(--retro-text-muted)",
+    duration: "var(--retro-text-muted)",
+  };
+
+  return (
+    <div className="space-y-4 mt-8">
+      <div className="flex items-center gap-2">
+        <div className="flex-1 h-px" style={{ backgroundColor: "var(--retro-border)" }} />
+        <span className="text-xs tracking-widest" style={{ color: "var(--retro-amber-dim)", fontFamily: "var(--font-display)" }}>
+          UNSTRUCTURED DATA UPLOAD
+        </span>
+        <div className="flex-1 h-px" style={{ backgroundColor: "var(--retro-border)" }} />
+      </div>
+
+      {/* Dropzone for unstructured files */}
+      <div
+        {...getUnstrRootProps()}
+        className="border-2 border-dashed p-8 text-center cursor-pointer transition-colors"
+        style={{
+          borderColor: isUnstrDragActive ? "var(--retro-amber)" : "var(--retro-border)",
+          backgroundColor: isUnstrDragActive ? "var(--retro-bg-card-hover)" : "var(--retro-bg-card)",
+          borderRadius: "2px",
+        }}
+      >
+        <input {...getUnstrInputProps()} />
+        <div className="space-y-2">
+          <p className="text-sm tracking-wider" style={{ color: "var(--retro-text-dim)", fontFamily: "var(--font-display)" }}>
+            DROP PDF, RTF, OR TIFF FOR AI EXTRACTION
+          </p>
+          <p className="text-xs" style={{ color: "var(--retro-text-muted)" }}>
+            Clinical notes, scanned documents, reports
+          </p>
+        </div>
+      </div>
+
+      {/* Selected unstructured file */}
+      {unstrFile && (
+        <RetroCard>
+          <RetroCardContent>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium" style={{ color: "var(--retro-text)" }}>{unstrFile.name}</p>
+                <p className="text-xs" style={{ color: "var(--retro-text-muted)" }}>{(unstrFile.size / 1024).toFixed(1)} KB</p>
+              </div>
+              <div className="flex gap-2">
+                <RetroButton variant="ghost" onClick={() => setUnstrFile(null)}>REMOVE</RetroButton>
+                <RetroButton onClick={handleUnstrUpload} disabled={uploading}>
+                  {uploading ? "UPLOADING..." : "EXTRACT"}
+                </RetroButton>
+              </div>
+            </div>
+          </RetroCardContent>
+        </RetroCard>
+      )}
+
+      {/* Processing state */}
+      {extraction && extraction.status === "processing" && (
+        <RetroCard>
+          <RetroCardContent>
+            <div className="flex items-center gap-3">
+              <span className="text-xs tracking-wider animate-pulse" style={{ color: "var(--retro-amber)", fontFamily: "var(--font-display)" }}>
+                EXTRACTING TEXT AND ENTITIES
+              </span>
+              <span className="blink-cursor text-sm" />
+            </div>
+          </RetroCardContent>
+        </RetroCard>
+      )}
+
+      {/* Error */}
+      {error && (
+        <RetroCard>
+          <RetroCardContent>
+            <div className="flex items-start gap-3">
+              <span className="text-xs font-bold shrink-0 px-2 py-0.5" style={{ backgroundColor: "var(--retro-terracotta)", color: "var(--retro-text)", borderRadius: "2px" }}>
+                ERROR
+              </span>
+              <p className="text-xs" style={{ color: "var(--retro-text-dim)" }}>{error}</p>
+            </div>
+          </RetroCardContent>
+        </RetroCard>
+      )}
+
+      {/* Confirm result */}
+      {confirmResult && (
+        <RetroCard accentTop>
+          <RetroCardHeader>
+            <GlowText as="h4" glow={false}>EXTRACTION CONFIRMED</GlowText>
+          </RetroCardHeader>
+          <RetroCardContent>
+            <p className="text-sm" style={{ color: "var(--retro-sage)" }}>
+              {confirmResult.records_created} health records created. View in ALL tab.
+            </p>
+          </RetroCardContent>
+        </RetroCard>
+      )}
+
+      {/* Entity Review Panel */}
+      {extraction && extraction.status === "awaiting_confirmation" && extraction.entities.length > 0 && !confirmResult && (
+        <RetroCard accentTop>
+          <RetroCardHeader>
+            <div className="flex items-center justify-between">
+              <GlowText as="h4" glow={false}>REVIEW EXTRACTED ENTITIES</GlowText>
+              <span className="text-xs" style={{ color: "var(--retro-text-dim)" }}>
+                {extraction.entities.length} entities found
+              </span>
+            </div>
+          </RetroCardHeader>
+          <RetroCardContent>
+            <div className="space-y-4">
+              {/* Patient selector */}
+              <div>
+                <label className="text-xs tracking-wider block mb-2" style={{ color: "var(--retro-text-dim)", fontFamily: "var(--font-display)" }}>
+                  ASSIGN TO PATIENT
+                </label>
+                <select
+                  value={selectedPatient}
+                  onChange={(e) => setSelectedPatient(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border"
+                  style={{
+                    backgroundColor: "var(--retro-bg-deep)",
+                    borderColor: "var(--retro-border)",
+                    color: "var(--retro-text)",
+                    fontFamily: "var(--font-mono)",
+                    borderRadius: "2px",
+                  }}
+                >
+                  {patients.map((p) => (
+                    <option key={p.id} value={p.id}>{p.fhir_id || p.id.slice(0, 8)} ({p.gender || "unknown"})</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Entity table */}
+              <div className="overflow-auto max-h-96">
+                <RetroTable>
+                  <RetroTableHeader>
+                    <RetroTableRow>
+                      <RetroTableHead className="w-10">{" "}</RetroTableHead>
+                      <RetroTableHead>TYPE</RetroTableHead>
+                      <RetroTableHead>TEXT</RetroTableHead>
+                      <RetroTableHead>DETAILS</RetroTableHead>
+                      <RetroTableHead className="w-16">CONF</RetroTableHead>
+                    </RetroTableRow>
+                  </RetroTableHeader>
+                  <RetroTableBody>
+                    {extraction.entities.map((entity, i) => (
+                      <RetroTableRow key={i}>
+                        <RetroTableCell>
+                          <input
+                            type="checkbox"
+                            checked={selectedEntities.has(i)}
+                            onChange={() => toggleEntity(i)}
+                            className="accent-amber-500"
+                          />
+                        </RetroTableCell>
+                        <RetroTableCell>
+                          <span className="text-xs font-bold uppercase" style={{ color: ENTITY_COLORS[entity.entity_class] || "var(--retro-text-dim)" }}>
+                            {entity.entity_class.replace("_", " ")}
+                          </span>
+                        </RetroTableCell>
+                        <RetroTableCell>
+                          <span className="text-xs" style={{ color: "var(--retro-text)" }}>{entity.text}</span>
+                        </RetroTableCell>
+                        <RetroTableCell>
+                          <span className="text-xs" style={{ color: "var(--retro-text-muted)" }}>
+                            {Object.entries(entity.attributes)
+                              .filter(([k]) => k !== "medication_group")
+                              .map(([k, v]) => `${k}: ${v}`)
+                              .join(", ")
+                              .slice(0, 60)}
+                          </span>
+                        </RetroTableCell>
+                        <RetroTableCell>
+                          <span className="text-xs" style={{ color: entity.confidence >= 0.8 ? "var(--retro-sage)" : "var(--retro-ochre)" }}>
+                            {(entity.confidence * 100).toFixed(0)}%
+                          </span>
+                        </RetroTableCell>
+                      </RetroTableRow>
+                    ))}
+                  </RetroTableBody>
+                </RetroTable>
+              </div>
+
+              {/* Confirm button */}
+              <div className="flex justify-end">
+                <RetroButton onClick={handleConfirm} disabled={confirming || selectedEntities.size === 0}>
+                  {confirming ? "SAVING..." : `CONFIRM & SAVE ${selectedEntities.size} ENTITIES`}
+                </RetroButton>
+              </div>
             </div>
           </RetroCardContent>
         </RetroCard>

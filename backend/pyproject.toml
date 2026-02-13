@@ -22,6 +22,10 @@ dependencies = [
     "python-multipart>=0.0.22",
     "sqlalchemy[asyncio]>=2.0.46",
     "uvicorn[standard]>=0.40.0",
+    "google-genai>=1.33.0",
+    "langextract>=1.0.7",
+    "striprtf>=0.0.28",
+    "Pillow>=11.0.0",
 ]
 
 [dependency-groups]

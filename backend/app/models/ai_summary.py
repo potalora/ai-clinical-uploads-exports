@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, Text
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -33,6 +33,10 @@ class AISummaryPrompt(Base, UUIDPrimaryKeyMixin):
     response_pasted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    response_source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    response_format: Mapped[str | None] = mapped_column(Text, nullable=True)
+    api_model_used: Mapped[str | None] = mapped_column(Text, nullable=True)
+    api_tokens_used: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     generated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default="now()",
