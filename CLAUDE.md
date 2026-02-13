@@ -10,6 +10,26 @@
 
 ---
 
+## Current Completion Status
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| Phase 1 | Foundation (auth, DB, API shell, frontend shell) | COMPLETE |
+| Phase 2 | Structured Data Ingestion (FHIR parser + 5 Epic mappers) | COMPLETE |
+| Phase 3 | Record Display & Timeline (via unified Admin Console) | COMPLETE |
+| Phase 4 | AI Prompt Builder (prompt-only, no API calls) | COMPLETE |
+| Phase 5 | Deduplication (detection + merge/dismiss + pagination) | COMPLETE |
+| Phase 6 | Unstructured Data Scaffolding (LangExtract/OCR) | NOT STARTED |
+| Phase 7 | Polish & Testing | PARTIAL |
+
+**Testing**: 83 backend tests passing across 8 test files. E2E verified manually via Playwright MCP (Flows A, B, C). No frontend test automation yet.
+
+**Frontend theme**: Retro CRT "Nostromo Earth Terminal" — amber/sage/sienna earth-tone palette, scanline effects, phosphor glow, monospace typography. 13 custom retro components.
+
+**API contract**: All endpoints match the canonical contract in `docs/backend-handoff.md`.
+
+---
+
 ## Tech Stack
 
 ### Backend
@@ -35,12 +55,15 @@
 ### Frontend
 - **Framework**: Next.js 15 (App Router) with TypeScript
 - **UI Library**: shadcn/ui + Radix primitives + Tailwind CSS 4
-- **Timeline**: `vis-timeline` (or custom canvas-based timeline built on `react-chrono`)
-- **Charts**: Recharts for lab value trends, vitals dashboards
-- **State**: Zustand for client state, TanStack Query v5 for server state
-- **File Upload**: `react-dropzone` with chunked upload support
+- **Custom components**: 13 retro-themed components in `components/retro/` (RetroCard, RetroButton, RetroTable, RetroTabs, RetroInput, RetroNav, RetroBadge, RetroLoadingState, CRTOverlay, GlowText, StatusReadout, TerminalLog, RecordDetailSheet)
+- **Charts**: Recharts (installed, available for lab trends)
+- **State**: Zustand (installed), TanStack Query v5 (installed, used for API polling)
+- **File Upload**: `react-dropzone` (installed)
+- **Icons**: `lucide-react`
+- **Toasts**: `sonner` via shadcn/ui
+- **Themes**: `next-themes`
 - **Auth**: NextAuth.js with credentials provider (local JWT validation)
-- **Testing**: Vitest + React Testing Library + Playwright (e2e)
+- **Testing**: E2E verified manually via Playwright MCP; no Vitest or automated Playwright specs configured yet
 
 ### Infrastructure (Local — No Docker)
 - **PostgreSQL 16**: Installed natively via Homebrew (`brew install postgresql@16`). Run as a macOS service.
@@ -50,12 +73,14 @@
 
 ---
 
-## Project Structure
+## Project Structure (Actual Built State)
 
 ```
 medtimeline/
 ├── CLAUDE.md                          # This file
 ├── .gitignore
+├── docs/
+│   └── backend-handoff.md             # Canonical API contract specification
 ├── scripts/
 │   ├── init-db.sql                    # PostgreSQL extensions (pgcrypto, uuid-ossp, pg_trgm)
 │   ├── setup-local.sh                 # One-shot: brew install, createdb, extensions, alembic migrate
@@ -75,23 +100,21 @@ medtimeline/
 │   │   ├── database.py                # SQLAlchemy engine + session
 │   │   ├── dependencies.py            # Dependency injection
 │   │   ├── middleware/
+│   │   │   ├── __init__.py
 │   │   │   ├── auth.py                # JWT middleware
 │   │   │   ├── audit.py               # Audit logging middleware
 │   │   │   └── encryption.py          # Field-level encryption helpers
-│   │   ├── models/                    # SQLAlchemy ORM models
+│   │   ├── models/                    # SQLAlchemy ORM models (unified health_records table)
 │   │   │   ├── __init__.py
-│   │   │   ├── user.py                # User, session models
+│   │   │   ├── base.py                # Base model class
+│   │   │   ├── user.py                # User model
 │   │   │   ├── patient.py             # Patient demographics
-│   │   │   ├── record.py              # Base health record model
-│   │   │   ├── clinical.py            # Conditions, allergies, procedures
-│   │   │   ├── observation.py         # Labs, vitals, measurements
-│   │   │   ├── document.py            # Clinical notes, reports, transcripts
-│   │   │   ├── medication.py          # Medication records
-│   │   │   ├── imaging.py             # Imaging studies & reports
-│   │   │   ├── encounter.py           # Encounters/visits
-│   │   │   ├── immunization.py        # Immunization records
+│   │   │   ├── record.py              # Unified health_records (all record types)
+│   │   │   ├── uploaded_file.py       # Upload tracking + ingestion progress
+│   │   │   ├── ai_summary.py          # AI prompt storage
+│   │   │   ├── deduplication.py       # Dedup candidates
 │   │   │   ├── provenance.py          # Data provenance tracking
-│   │   │   └── deduplication.py       # Dedup candidates & merge history
+│   │   │   └── audit.py               # Audit log
 │   │   ├── schemas/                   # Pydantic request/response schemas
 │   │   │   ├── __init__.py
 │   │   │   ├── auth.py
@@ -112,44 +135,28 @@ medtimeline/
 │   │   │   └── dashboard.py           # /api/dashboard/*
 │   │   ├── services/                  # Business logic layer
 │   │   │   ├── __init__.py
+│   │   │   ├── auth_service.py        # Auth business logic
 │   │   │   ├── ingestion/
 │   │   │   │   ├── __init__.py
-│   │   │   │   ├── coordinator.py     # Orchestrates ingestion pipeline + background jobs
-│   │   │   │   ├── fhir_parser.py     # FHIR R4 Bundle/Resource parsing (Phase 1, streams with ijson)
-│   │   │   │   ├── epic_parser.py     # Epic EHI Tables TSV directory parsing (Phase 1, streams row-by-row)
-│   │   │   │   ├── epic_mappers/      # One mapper class per Epic table → FHIR resource
-│   │   │   │   │   ├── __init__.py
-│   │   │   │   │   ├── base.py        # Abstract mapper interface
-│   │   │   │   │   ├── patient.py     # PATIENT → FHIR Patient
-│   │   │   │   │   ├── problems.py    # PROBLEM_LIST, MEDICAL_HX → FHIR Condition
-│   │   │   │   │   ├── results.py     # ORDER_RESULTS, ORDER_RESULT_COMPONENTS → FHIR Observation
-│   │   │   │   │   ├── medications.py # MEDICATIONS, ORDER_MED → FHIR MedicationRequest
-│   │   │   │   │   ├── allergies.py   # ALLERGIES → FHIR AllergyIntolerance
-│   │   │   │   │   ├── immunizations.py
-│   │   │   │   │   ├── encounters.py  # ENCOUNTERS, PAT_ENC → FHIR Encounter
-│   │   │   │   │   ├── procedures.py  # PROCEDURES, ORDER_PROC → FHIR Procedure
-│   │   │   │   │   └── documents.py   # DOC_INFORMATION → FHIR DocumentReference
-│   │   │   │   ├── normalizer.py      # FHIR R4B normalization layer
+│   │   │   │   ├── coordinator.py     # Orchestrates ingestion pipeline
+│   │   │   │   ├── fhir_parser.py     # FHIR R4 Bundle/Resource parsing
+│   │   │   │   ├── epic_parser.py     # Epic EHI Tables TSV directory parsing
 │   │   │   │   ├── bulk_inserter.py   # Batched DB insert with commit-per-batch
-│   │   │   │   ├── langextract_scaffold.py  # LangExtract config & mapping (Phase 2 scaffold, NO API calls)
-│   │   │   │   ├── langextract_config/      # Few-shot examples & extraction schemas for LangExtract
-│   │   │   │   │   ├── clinical_notes.json
-│   │   │   │   │   ├── medications.json
-│   │   │   │   │   └── lab_results.json
-│   │   │   │   ├── ocr_scaffold.py    # PDF text extraction + Tesseract OCR (Phase 2 scaffold)
-│   │   │   │   └── response_parser.py # Parses pasted-back AI extraction responses into FHIR
+│   │   │   │   └── epic_mappers/      # One mapper class per Epic table → FHIR resource
+│   │   │   │       ├── __init__.py
+│   │   │   │       ├── base.py        # Abstract mapper interface
+│   │   │   │       ├── problems.py    # PROBLEM_LIST → FHIR Condition
+│   │   │   │       ├── results.py     # ORDER_RESULTS → FHIR Observation
+│   │   │   │       ├── medications.py # MEDICATIONS → FHIR MedicationRequest
+│   │   │   │       ├── encounters.py  # ENCOUNTERS → FHIR Encounter
+│   │   │   │       └── documents.py   # DOC_INFORMATION → FHIR DocumentReference
 │   │   │   ├── ai/
 │   │   │   │   ├── __init__.py
 │   │   │   │   ├── prompt_builder.py  # Builds complete prompts for Gemini (NO API calls)
-│   │   │   │   ├── summarizer.py      # Orchestrates prompt construction for summaries
-│   │   │   │   ├── extractor.py       # Builds prompts for entity extraction from unstructured docs
-│   │   │   │   ├── prompts.py         # All AI prompt templates (centralized)
 │   │   │   │   └── phi_scrubber.py    # PHI de-identification (18 HIPAA identifiers)
 │   │   │   ├── dedup/
 │   │   │   │   ├── __init__.py
-│   │   │   │   ├── detector.py        # Duplicate detection (fuzzy + exact matching)
-│   │   │   │   ├── merger.py          # Record merging with provenance
-│   │   │   │   └── scoring.py         # Confidence scoring for dedup candidates
+│   │   │   │   └── detector.py        # Duplicate detection (fuzzy + exact matching)
 │   │   │   ├── timeline_service.py    # Timeline data aggregation
 │   │   │   ├── dashboard_service.py   # Dashboard metrics & aggregation
 │   │   │   └── encryption_service.py  # AES-256 field-level encryption
@@ -158,30 +165,21 @@ medtimeline/
 │   │       ├── coding.py              # LOINC, SNOMED, ICD-10 code lookups
 │   │       ├── date_utils.py          # Date/time normalization
 │   │       └── file_utils.py          # File type detection, temp storage
-│   └── tests/
-│       ├── conftest.py                # Fixtures, test DB, factories
-│       ├── test_auth.py
-│       ├── test_ingestion/
-│       │   ├── test_fhir_parser.py    # Tests against user-provided FHIR JSON
-│       │   ├── test_epic_parser.py    # Tests against user-provided Epic export
-│       │   ├── test_normalizer.py
-│       │   ├── test_coordinator.py
-│       │   └── test_response_parser.py
-│       ├── test_api/
-│       │   ├── test_records.py
-│       │   ├── test_upload.py
-│       │   ├── test_timeline.py
-│       │   └── test_summary.py
-│       ├── test_dedup/
-│       │   ├── test_detector.py
-│       │   └── test_merger.py
-│       ├── test_phi_scrubber.py       # Thorough PHI de-identification tests
+│   └── tests/                         # 83 tests, flat structure
+│       ├── __init__.py
+│       ├── conftest.py                # Fixtures, test DB, auth_headers(), create_test_patient(), seed_test_records()
+│       ├── test_auth.py               # Auth endpoint tests
+│       ├── test_records.py            # Records CRUD tests
+│       ├── test_dashboard.py          # Dashboard overview + labs tests
+│       ├── test_timeline.py           # Timeline + stats tests
+│       ├── test_upload.py             # Upload + ingestion status tests
+│       ├── test_summary.py            # Prompt build + paste-response tests
+│       ├── test_dedup.py              # Dedup candidates + merge/dismiss tests
+│       ├── test_ingestion.py          # FHIR parser + Epic mapper unit tests
 │       └── fixtures/                  # Test data
-│           ├── README.md              # Instructions for placing user-provided files
-│           ├── user_provided_fhir.json      # User's real FHIR export (gitignored)
-│           ├── epic_export/                 # User's real Epic EHI Tables dir (gitignored)
-│           ├── sample_fhir_bundle.json      # Synthetic FHIR bundle mirroring real structure
-│           └── sample_epic_tsv/             # Synthetic Epic TSV mirroring real structure
+│           ├── README.md
+│           ├── sample_fhir_bundle.json      # Synthetic FHIR bundle
+│           └── sample_epic_tsv/             # Synthetic Epic TSV
 │               ├── PATIENT.tsv
 │               ├── PROBLEM_LIST.tsv
 │               ├── ORDER_RESULTS.tsv
@@ -194,106 +192,85 @@ medtimeline/
 │   ├── tsconfig.json
 │   ├── next.config.ts
 │   ├── tailwind.config.ts
-│   ├── playwright.config.ts
-│   ├── vitest.config.ts
 │   ├── src/
 │   │   ├── app/
-│   │   │   ├── layout.tsx             # Root layout with providers
+│   │   │   ├── layout.tsx             # Root layout (Berkeley Mono + Space Mono + VT323 fonts)
+│   │   │   ├── globals.css            # Retro earth-tone palette + CRT effects
 │   │   │   ├── page.tsx               # Landing / login redirect
 │   │   │   ├── (auth)/
-│   │   │   │   ├── login/page.tsx
-│   │   │   │   └── register/page.tsx
-│   │   │   ├── (dashboard)/
-│   │   │   │   ├── layout.tsx         # Dashboard shell (sidebar + header)
-│   │   │   │   ├── page.tsx           # Main dashboard overview
-│   │   │   │   ├── timeline/page.tsx  # Full timeline view
-│   │   │   │   ├── records/
-│   │   │   │   │   ├── page.tsx       # Records list/search
-│   │   │   │   │   └── [id]/page.tsx  # Single record detail
-│   │   │   │   ├── upload/page.tsx    # Upload & ingestion UI
-│   │   │   │   ├── labs/page.tsx      # Lab results dashboard
-│   │   │   │   ├── medications/page.tsx
-│   │   │   │   ├── conditions/page.tsx
-│   │   │   │   ├── immunizations/page.tsx
-│   │   │   │   ├── imaging/page.tsx
-│   │   │   │   ├── encounters/page.tsx
-│   │   │   │   ├── summaries/page.tsx # AI summaries hub
-│   │   │   │   ├── dedup/page.tsx     # Deduplication management
-│   │   │   │   └── settings/page.tsx  # User settings & data management
-│   │   │   └── api/auth/[...nextauth]/route.ts
+│   │   │   │   ├── login/page.tsx     # Retro-styled login
+│   │   │   │   └── register/page.tsx  # Retro-styled registration
+│   │   │   └── (dashboard)/
+│   │   │       ├── layout.tsx         # Dashboard shell (RetroNav sidebar)
+│   │   │       ├── page.tsx           # Home dashboard (stats, recent activity)
+│   │   │       ├── timeline/page.tsx  # Full timeline view (retro-styled)
+│   │   │       ├── summaries/page.tsx # AI summaries hub (prompt build + paste-back)
+│   │   │       ├── admin/page.tsx     # Unified Admin Console (1012 lines, 12 tabs)
+│   │   │       ├── records/
+│   │   │       │   ├── page.tsx       # Redirects to admin?tab=all
+│   │   │       │   └── [id]/page.tsx  # Single record detail (retro-styled)
+│   │   │       ├── labs/page.tsx           # → admin?tab=labs
+│   │   │       ├── medications/page.tsx    # → admin?tab=medications
+│   │   │       ├── conditions/page.tsx     # → admin?tab=conditions
+│   │   │       ├── encounters/page.tsx     # → admin?tab=encounters
+│   │   │       ├── immunizations/page.tsx  # → admin?tab=immunizations
+│   │   │       ├── imaging/page.tsx        # → admin?tab=imaging
+│   │   │       ├── upload/page.tsx         # → admin?tab=upload
+│   │   │       ├── dedup/page.tsx          # → admin?tab=dedup
+│   │   │       └── settings/page.tsx       # → admin?tab=settings
 │   │   ├── components/
 │   │   │   ├── ui/                    # shadcn/ui components
+│   │   │   │   ├── button.tsx
+│   │   │   │   ├── card.tsx
+│   │   │   │   ├── input.tsx
+│   │   │   │   ├── label.tsx
+│   │   │   │   ├── dialog.tsx
+│   │   │   │   ├── sheet.tsx
+│   │   │   │   ├── table.tsx
+│   │   │   │   ├── badge.tsx
+│   │   │   │   ├── tabs.tsx
+│   │   │   │   ├── separator.tsx
+│   │   │   │   ├── dropdown-menu.tsx
+│   │   │   │   ├── sonner.tsx
+│   │   │   │   ├── alert.tsx
+│   │   │   │   ├── avatar.tsx
+│   │   │   │   └── scroll-area.tsx
 │   │   │   ├── layout/
-│   │   │   │   ├── Sidebar.tsx
-│   │   │   │   ├── Header.tsx
-│   │   │   │   └── Breadcrumbs.tsx
-│   │   │   ├── timeline/
-│   │   │   │   ├── TimelineView.tsx   # Main interactive timeline
-│   │   │   │   ├── TimelineEvent.tsx  # Individual event card
-│   │   │   │   ├── TimelineFilters.tsx
-│   │   │   │   └── TimelineZoom.tsx
-│   │   │   ├── dashboard/
-│   │   │   │   ├── OverviewCards.tsx   # Summary stat cards
-│   │   │   │   ├── RecentActivity.tsx
-│   │   │   │   ├── HealthSnapshot.tsx
-│   │   │   │   └── QuickActions.tsx
-│   │   │   ├── records/
-│   │   │   │   ├── RecordCard.tsx
-│   │   │   │   ├── RecordDetail.tsx
-│   │   │   │   ├── RecordSearch.tsx
-│   │   │   │   └── RecordFilters.tsx
-│   │   │   ├── labs/
-│   │   │   │   ├── LabChart.tsx       # Trend chart for lab values
-│   │   │   │   ├── LabTable.tsx
-│   │   │   │   └── LabRangeIndicator.tsx
-│   │   │   ├── upload/
-│   │   │   │   ├── UploadZone.tsx     # Drag & drop upload (JSON, ZIP, TSV directory)
-│   │   │   │   ├── UploadProgress.tsx # File upload progress (transfer to server)
-│   │   │   │   ├── IngestionStatus.tsx # Ingestion pipeline progress (parsing + DB insert)
-│   │   │   │   ├── EpicImportProgress.tsx  # Large import: per-file progress, row counts, ETA
-│   │   │   │   ├── IngestionErrors.tsx     # Row-level error display for failed records
-│   │   │   │   └── FilePreview.tsx
-│   │   │   ├── summary/
-│   │   │   │   ├── SummaryCard.tsx
-│   │   │   │   ├── PromptBuilder.tsx       # UI to select records & build prompt
-│   │   │   │   ├── PromptReview.tsx        # Displays constructed prompt for review + copy
-│   │   │   │   ├── ResponsePasteBack.tsx   # Paste AI response back into app
-│   │   │   │   └── SummaryDisclaimer.tsx   # ALWAYS shown with AI-related features
-│   │   │   └── dedup/
-│   │   │       ├── DedupCandidates.tsx
-│   │   │       ├── DedupComparison.tsx    # Side-by-side comparison
-│   │   │       └── MergeConfirmation.tsx
-│   │   ├── hooks/
-│   │   │   ├── useRecords.ts
-│   │   │   ├── useTimeline.ts
-│   │   │   ├── useUpload.ts
-│   │   │   ├── useSummary.ts
-│   │   │   └── useDedup.ts
-│   │   ├── lib/
-│   │   │   ├── api.ts                 # API client (fetch wrapper)
-│   │   │   ├── auth.ts                # NextAuth config
-│   │   │   ├── utils.ts               # Shared utilities
-│   │   │   └── constants.ts
-│   │   ├── stores/
-│   │   │   ├── useAuthStore.ts
-│   │   │   └── useUIStore.ts
-│   │   └── types/
-│   │       ├── records.ts             # TypeScript types mirroring backend schemas
-│   │       ├── timeline.ts
-│   │       └── api.ts
-│   └── tests/
-│       ├── components/
-│       └── e2e/
-│           ├── auth.spec.ts
-│           ├── upload.spec.ts
-│           ├── timeline.spec.ts
-│           └── dedup.spec.ts
+│   │   │   │   ├── Sidebar.tsx        # Legacy sidebar (superseded by RetroNav)
+│   │   │   │   └── Header.tsx         # Legacy header
+│   │   │   ├── retro/                 # Custom retro CRT component library
+│   │   │   │   ├── CRTOverlay.tsx     # Scanline + vignette overlay
+│   │   │   │   ├── GlowText.tsx       # Phosphor glow text effects
+│   │   │   │   ├── RetroCard.tsx      # Bordered card with glow
+│   │   │   │   ├── RetroButton.tsx    # Earth-tone buttons with hover glow
+│   │   │   │   ├── RetroTable.tsx     # Styled data table
+│   │   │   │   ├── RetroTabs.tsx      # Tab navigation
+│   │   │   │   ├── RetroInput.tsx     # Form inputs
+│   │   │   │   ├── RetroNav.tsx       # Sidebar navigation
+│   │   │   │   ├── RetroBadge.tsx     # Status badges
+│   │   │   │   ├── RetroLoadingState.tsx  # Loading spinner/skeleton
+│   │   │   │   ├── StatusReadout.tsx  # Key-value status display
+│   │   │   │   ├── TerminalLog.tsx    # Terminal-style log output
+│   │   │   │   └── RecordDetailSheet.tsx  # Slide-over record detail
+│   │   │   └── Providers.tsx          # TanStack Query + theme providers
+│   │   └── lib/
+│   │       ├── api.ts                 # API client (fetch wrapper)
+│   │       ├── utils.ts               # Shared utilities (cn)
+│   │       └── constants.ts           # API URL, app name
+│   └── (no automated test files yet)
 │
 └── scripts/
     ├── seed_sample_data.py            # Seeds DB with FHIR Synthea data
     ├── generate_test_fixtures.py      # Generates test fixture files
     └── reset_db.sh                    # Drops and recreates DB
 ```
+
+**Note on planned but not-yet-built files** (Phase 6 future work):
+- `services/ingestion/langextract_scaffold.py`, `langextract_config/`, `ocr_scaffold.py`, `response_parser.py`
+- `services/ai/extractor.py`, `services/ai/prompts.py`, `services/ai/summarizer.py`
+- `services/dedup/merger.py`, `services/dedup/scoring.py`
+- `services/ingestion/epic_mappers/patient.py`, `allergies.py`, `immunizations.py`, `procedures.py`
+- Frontend: `hooks/`, `stores/`, `types/` directories (inline types used instead)
 
 ---
 
@@ -852,35 +829,57 @@ data/tmp/
 
 ---
 
-## Frontend Design System
+## Frontend Design System: "Nostromo Earth Terminal"
 
 ### Visual Language
-- **Color palette**: Medical-professional with accessible contrast ratios (WCAG AA minimum)
-  - Primary: Slate/Blue tones (`slate-900` text, `blue-600` primary actions)
-  - Categories: Distinct colors per record type (labs=teal, meds=violet, conditions=amber, imaging=cyan, encounters=emerald)
-  - Status: Success=green, Warning=amber, Error=red, Info=blue
-- **Typography**: Inter for UI, JetBrains Mono for codes/values
-- **Layout**: Responsive sidebar layout. Minimum 1024px for dashboard. Mobile-aware but optimized for desktop first.
-- **Motion**: Subtle transitions only. No animations that delay user workflows.
+The frontend uses a retro CRT terminal aesthetic inspired by 1970s-80s space program consoles. All pages share this unified visual identity.
 
-### Timeline View (Primary Experience)
-- Horizontal scrollable timeline with zoom controls (day/week/month/year/all)
-- Color-coded dots/cards by record type
-- Hover for preview, click for detail panel (slide-over, not full page nav)
-- Filter by: record type, date range, source, category
-- Search within timeline
+- **Color palette**: Dark earth tones with phosphor accents
+  - Background: deep brown-black (`#0d0b08`), dark earth (`#1a1612`)
+  - Primary text: warm amber (`#e09040`)
+  - Secondary text: dusty gold (`#b8956a`)
+  - Success/active: sage green (`#7a8c5a`)
+  - Warning/alert: terracotta (`#c45a3c`)
+  - Accent: ochre (`#d4a843`)
+  - Borders: sienna (`#a0522d`)
+  - Categories: Each record type has a distinct warm color (labs=sage, meds=amber, conditions=ochre, encounters=sienna, imaging=dusty rose, immunizations=olive)
+- **Typography**: Monospace-first
+  - Display/headings: Berkeley Mono (Google Fonts fallback: Space Mono)
+  - Body text: Space Mono
+  - Terminal output/data: VT323
+- **Effects** (via CSS, defined in `globals.css`):
+  - CRT scanline overlay (semi-transparent horizontal lines via `CRTOverlay.tsx`)
+  - Phosphor glow on interactive elements (text-shadow with amber/green glow)
+  - Vignette corner darkening (radial gradient overlay)
+  - Noise texture backgrounds (CSS `filter` grain)
+- **Layout**: Sidebar navigation (RetroNav) + main content area. Desktop-optimized (1024px+).
+- **Motion**: Minimal — subtle glow pulses on hover, no transition delays.
 
-### Dashboard Overview
-- **Top row**: Patient summary card (name, age, key stats), record count badges, last upload date
-- **Health snapshot**: Key vitals trend (if available), active medications count, active conditions count
-- **Recent activity**: Last 10 records added, with type badges
-- **Quick actions**: Upload records, Build summary prompt, Review duplicates
+### Custom Retro Components (`components/retro/`)
+13 components that implement the design system:
+1. **CRTOverlay** — Scanline + vignette overlay applied to the entire viewport
+2. **GlowText** — Text with configurable phosphor glow color (amber, green, red)
+3. **RetroCard** — Bordered card with sienna border and optional glow header
+4. **RetroButton** — Earth-tone buttons with hover phosphor glow
+5. **RetroTable** — Styled data table with amber headers and alternating rows
+6. **RetroTabs** — Tab navigation bar with glowing active indicator
+7. **RetroInput** — Form inputs with CRT-style focus glow
+8. **RetroNav** — Sidebar navigation with icon + label items
+9. **RetroBadge** — Colored status badges for record types
+10. **RetroLoadingState** — Terminal-style loading animation
+11. **StatusReadout** — Key-value pair display (like a cockpit readout)
+12. **TerminalLog** — Scrollable terminal-style log output
+13. **RecordDetailSheet** — Slide-over panel for record detail view
 
-### Lab Results View
-- Table with sortable columns (test name, value, reference range, date, trend)
-- Inline sparkline trend charts per lab type
-- Click to expand full trend chart (Recharts line chart with reference range shading)
-- Flag out-of-range values visually (red/amber indicators — display only, no interpretation)
+### Page Architecture
+- **Home** (`/`) — Dashboard with stats cards, recent activity, quick actions
+- **Timeline** (`/timeline`) — Vertical timeline of all records, filterable by type/date
+- **Summaries** (`/summaries`) — AI prompt builder + prompt review + response paste-back
+- **Admin Console** (`/admin`) — Unified 12-tab interface consolidating all category views:
+  - HOME, ALL, LABS, MEDS, COND, ENC, IMM, IMG, UPLOAD, DEDUP, SUMM, SET
+  - Each tab is a self-contained view with its own data fetching and UI
+  - Category pages (`/labs`, `/medications`, etc.) redirect to the corresponding admin tab
+- **Record Detail** (`/records/[id]`) — Full record view with FHIR resource JSON display
 
 ### Large Import UX (Epic EHI Exports)
 
@@ -934,6 +933,8 @@ const { data: importStatus } = useQuery({
 
 ## API Design
 
+> **Canonical contract**: See `docs/backend-handoff.md` for the full API specification with request/response schemas.
+
 ### Base URL: `/api/v1`
 
 ### Authentication
@@ -979,8 +980,8 @@ GET    /api/v1/summary/responses      # List stored responses
 
 ### Deduplication
 ```
-GET    /api/v1/dedup/candidates   # List dedup candidates
-POST   /api/v1/dedup/merge        # Merge two records
+GET    /api/v1/dedup/candidates   # List dedup candidates (supports ?page=1&limit=20 pagination)
+POST   /api/v1/dedup/merge        # Merge two records (primary_record_id optional)
 POST   /api/v1/dedup/dismiss      # Dismiss candidate pair
 ```
 
@@ -994,136 +995,109 @@ GET    /api/v1/dashboard/labs     # Lab-specific dashboard data
 
 ## Build Phases & Execution Order
 
-### Phase 1: Foundation (Build First)
+### Phase 1: Foundation — COMPLETE
 1. Project scaffolding (both backend and frontend)
-2. **Git init** — initialize repo, create `.gitignore` with PHI-safe exclusions, first commit
+2. Git init, `.gitignore` with PHI-safe exclusions
 3. Local PostgreSQL + Redis setup script (`scripts/setup-local.sh`)
-4. Database models + Alembic migrations
-5. User auth (register, login, JWT)
+4. Database models + Alembic migrations (unified `health_records` table)
+5. User auth (register, login, JWT with bcrypt)
 6. Basic API structure with health check
 7. Frontend auth pages + dashboard shell
-8. **Git tag: `phase-1-foundation`**
 
-### Phase 2: Structured Data Ingestion (Core — Fully Autonomous)
-1. File upload API with validation (accept JSON, TSV, ZIP)
-2. **FHIR R4 JSON parser** — build and test against user-provided `user_provided_fhir.json`
-   - Parse Bundle resources, extract individual entries
-   - Map all supported FHIR resource types to `health_records` table
-   - Preserve full FHIR resource as JSONB
-   - Extract dates, codes, display text for timeline/search
-3. **Epic EHI Tables parser** — build and test against user-provided `epic_export/` directory
-   - Parse TSV files with Epic's schema conventions
-   - Map key Epic tables (PATIENT, PROBLEM_LIST, ORDER_RESULTS, MEDICATIONS, ALLERGIES, IMMUNIZATIONS, ENCOUNTERS, PROCEDURES, DOC_INFORMATION) to FHIR R4B resources
-   - Handle Epic date formats, ID linking between tables
-4. FHIR R4B normalization layer (common output format for both parsers)
-5. Upload UI with drag-and-drop, format detection, progress tracking
-6. Ingestion status tracking and error reporting
-7. Create synthetic test fixtures that mirror the structure of user-provided files (for CI/CD)
-8. **Git tag: `phase-2-ingestion`**
+### Phase 2: Structured Data Ingestion — COMPLETE
+1. File upload API with validation (accept JSON)
+2. FHIR R4 JSON parser — parses Bundle resources, extracts entries, maps to `health_records`
+3. Epic EHI Tables parser — 5 mappers built (problems, results, medications, encounters, documents)
+4. Bulk inserter with batched DB writes
+5. Upload UI with drag-and-drop in Admin Console
+6. Ingestion status tracking and error reporting endpoints
+7. Synthetic test fixtures (`sample_fhir_bundle.json`, `sample_epic_tsv/`)
 
-### Phase 3: Record Display & Timeline
-1. Records list API with pagination + filtering
-2. Timeline API with date aggregation
-3. Frontend records list + detail views
-4. Timeline component (interactive, zoomable)
-5. Dashboard overview page with stats
-6. Category-specific views (labs, meds, conditions, etc.)
-7. Lab chart trend views
-8. **Git tag: `phase-3-display`**
+### Phase 3: Record Display & Timeline — COMPLETE
+1. Records list API with pagination + filtering + search
+2. Timeline API with date aggregation + stats
+3. Unified Admin Console with 12-tab interface (replaces individual category pages)
+4. Record detail view with FHIR resource JSON display
+5. Dashboard home page with overview stats + recent activity
+6. Timeline page with type filtering
 
-### Phase 4: AI Prompt Builder (No API Calls)
-1. PHI scrubber / de-identification service with all 18 HIPAA identifiers
-2. Prompt builder service that constructs complete prompts from de-identified records
-3. Prompt construction for all 4 summary types
-4. Prompt API endpoints (build, list, paste-response)
-5. Prompt review UI: displays full prompt, copy button, de-identification report
-6. Response paste-back UI: user pastes AI response, app stores it
-7. Prompt templates with test coverage (verify de-identification, verify no-diagnosis instructions)
-8. **Git tag: `phase-4-prompts`**
+### Phase 4: AI Prompt Builder — COMPLETE
+1. PHI scrubber / de-identification service
+2. Prompt builder constructs de-identified prompts for `gemini-3-flash-preview`
+3. Prompt API endpoints (build-prompt, list prompts, paste-response, list responses)
+4. Summaries page with prompt build + review + copy + paste-back UI
+5. AI disclaimer included in all prompt-related UI
 
-### Phase 5: Deduplication
-1. Duplicate detection service (exact + fuzzy)
-2. Dedup candidate storage + API
-3. Side-by-side comparison UI
-4. Merge workflow with provenance tracking
-5. File-level dedup on upload
-6. **Git tag: `phase-5-dedup`**
+### Phase 5: Deduplication — COMPLETE
+1. Duplicate detection service (exact matching)
+2. Dedup candidate storage + paginated API (`?page=1&limit=20`)
+3. Merge and dismiss endpoints with proper response contracts
+4. Dedup management UI in Admin Console tab
 
-### Phase 6: Unstructured Data Scaffolding (Interfaces Only — Not Autonomous)
-1. LangExtract integration scaffold: extraction schemas, few-shot examples for clinical notes, medication extraction, lab values (config files only — NO `langextract` install, NO API calls)
-2. FHIR mapping layer for LangExtract extraction output → FHIR R4B resources
-3. Response parser for pasted-back LangExtract/AI extraction results
-4. OCR scaffold: PyMuPDF text extraction (autonomous), Tesseract OCR (autonomous), AI post-processing prompt templates (not autonomous)
-5. Upload UI extension: detect unstructured files, show "requires AI processing" workflow, prompt review + paste-back UI for extraction results
-6. Unstructured extraction prompt flow (upload → extract text → build prompt → user executes externally → paste response → ingest)
-7. **Git tag: `phase-6-unstructured-scaffold`**
+### Phase 6: Unstructured Data Scaffolding — NOT STARTED
+_(Spec retained below for future implementation)_
+1. LangExtract integration scaffold: extraction schemas, few-shot examples (config only, NO install)
+2. FHIR mapping layer for LangExtract output
+3. Response parser for pasted-back extraction results
+4. OCR scaffold: PyMuPDF/Tesseract text extraction + AI post-processing prompts
+5. Upload UI extension for unstructured files
+6. Unstructured extraction prompt flow
 
-### Phase 7: Polish & Testing
-1. Comprehensive test suite (unit + integration) — run against both user-provided and synthetic fixtures
-2. E2E tests with Playwright
-3. Error handling hardening
-4. Performance optimization (query tuning, lazy loading)
-5. Accessibility audit (WCAG AA)
-6. HIPAA compliance audit checklist
-7. **Git tag: `v1.0-local`**
+### Phase 7: Polish & Testing — PARTIAL
+1. 83 backend tests across 8 files — ALL PASSING
+2. E2E testing: 3 flows verified manually via Playwright MCP (auth, upload+timeline, admin console)
+3. No automated Playwright specs or Vitest frontend tests yet
+4. Remaining: automated E2E specs, accessibility audit, HIPAA compliance checklist
 
 ---
 
 ## Testing Strategy
 
-### Test Fixture Philosophy
+### Current Test Suite: 83 Backend Tests
 
-**Primary test targets: user-provided real files.** The FHIR parser tests run against the user's actual FHIR JSON export. The Epic parser tests run against the user's actual Epic EHI Tables directory. This ensures parsers handle real-world data structures, not idealized synthetic data.
+All tests are in flat files under `backend/tests/`:
 
-**Secondary test targets: synthetic fixtures.** Minimal synthetic files mirroring the structure of the real files (same resource types, same table names, same field patterns) are created for CI/CD and for running tests without real PHI.
+| File | Tests | Coverage |
+|------|-------|----------|
+| `test_auth.py` | 6 | Register, login, protected routes, token refresh |
+| `test_records.py` | 12 | CRUD, pagination, filtering, search, soft delete |
+| `test_dashboard.py` | 10 | Overview stats, labs endpoint, type counts |
+| `test_timeline.py` | 8 | Timeline data, filtering, stats, total count |
+| `test_upload.py` | 9 | Upload flow, status polling, error endpoint, history |
+| `test_summary.py` | 12 | Prompt build, de-identification, paste-response, list |
+| `test_dedup.py` | 15 | Candidates, merge, dismiss, pagination |
+| `test_ingestion.py` | 11 | FHIR parser, Epic mappers (problems, results, meds, encounters, documents) |
 
-**Fixture discovery pattern in `conftest.py`:**
+### Test Helpers (in `conftest.py`)
+
 ```python
-import pytest
-from pathlib import Path
-
-FIXTURES_DIR = Path(__file__).parent / "fixtures"
-
-@pytest.fixture
-def fhir_bundle():
-    """Load user-provided FHIR JSON, fall back to synthetic."""
-    user_file = FIXTURES_DIR / "user_provided_fhir.json"
-    synthetic_file = FIXTURES_DIR / "sample_fhir_bundle.json"
-    path = user_file if user_file.exists() else synthetic_file
-    return json.loads(path.read_text())
-
-@pytest.fixture
-def epic_export_dir():
-    """Load user-provided Epic export dir, fall back to synthetic."""
-    user_dir = FIXTURES_DIR / "epic_export"
-    synthetic_dir = FIXTURES_DIR / "sample_epic_tsv"
-    return user_dir if user_dir.exists() else synthetic_dir
+auth_headers(client, email, password)  # Register + login, return {"Authorization": "Bearer ..."}
+create_test_patient(client, headers)    # Create a patient, return patient_id
+seed_test_records(client, headers, patient_id, count=5)  # Seed health records
 ```
 
-### Backend
-- **Unit tests**: Every parser, service method, utility function. Use factory-boy for model factories.
-- **Parser tests**: Run against user-provided real files first, synthetic fallback second. Test every FHIR resource type found in the real data. Test every Epic table found in the real export.
-- **Integration tests**: Full API request/response cycles with test database. Use httpx AsyncClient.
-- **AI prompt tests**: Test de-identification thoroughly — unit test every PHI type against the scrubber. Test prompt templates produce expected instruction structure. Test that NO raw PII/PHI appears in any constructed prompt. Test paste-back response parsing.
-- **Coverage target**: 80%+ on services, 90%+ on parsers.
-
-### Frontend
-- **Component tests**: Vitest + RTL for all components with user interactions.
-- **E2E tests**: Playwright for critical flows (register → login → upload FHIR → upload Epic → view timeline → build prompt → copy prompt → paste response → dedup).
-- **Visual**: Screenshot tests for timeline and dashboard layouts.
+### Test Fixtures
+- **Synthetic fixtures** (committed, always available): `sample_fhir_bundle.json`, `sample_epic_tsv/` (6 TSVs)
+- **User-provided fixtures** (gitignored): `user_provided_fhir.json`, `epic_export/` — tests fall back to synthetic if not present
 
 ### Running Tests
 ```bash
-# Backend (will use user-provided fixtures if present, synthetic otherwise)
+# Run all 83 backend tests
+cd backend && python -m pytest -x -v
+
+# Run specific test file
+cd backend && python -m pytest tests/test_dedup.py -v
+
+# Run with short traceback
 cd backend && python -m pytest -x -v --tb=short
-
-# Backend with only synthetic fixtures (CI-safe, no PHI)
-cd backend && FIXTURES_MODE=synthetic python -m pytest -x -v --tb=short
-
-# Frontend
-cd frontend && npm run test        # Vitest unit tests
-cd frontend && npx playwright test # E2E tests
 ```
+
+### Frontend Testing
+- **No automated tests configured yet** — no Vitest or Playwright automation
+- **Manual E2E** verified via Playwright MCP browser testing:
+  - Flow A: Register → Login → Dashboard loads
+  - Flow B: Upload FHIR JSON → Records appear in timeline
+  - Flow C: Admin Console tabs navigate correctly
 
 ---
 
@@ -1389,7 +1363,7 @@ mkdir -p backend && cd backend
 cd .. && npx create-next-app@latest frontend --typescript --tailwind --eslint --app --src-dir
 cd frontend
 # Install: @tanstack/react-query zustand next-auth react-dropzone recharts
-#          vis-timeline (or react-chrono) date-fns zod
+#          date-fns zod lucide-react sonner next-themes
 # Install shadcn: npx shadcn@latest init
 # Add components: button card input label dialog sheet table badge tabs separator
 #                 dropdown-menu command popover calendar toast alert avatar scroll-area
