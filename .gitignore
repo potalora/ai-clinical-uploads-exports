@@ -82,6 +82,7 @@ settings.json
 # Claude Code local config
 CLAUDE.md
 .claude/
+.playwright-mcp/
 
 # Backend data directory
 backend/data/
