@@ -18,9 +18,9 @@ import { RetroTabs } from "@/components/retro/RetroTabs";
 import { RetroLoadingState } from "@/components/retro/RetroLoadingState";
 
 const SUMMARY_TYPES = [
-  { key: "full", label: "FULL" },
-  { key: "category", label: "CATEGORY" },
-  { key: "date_range", label: "DATE RANGE" },
+  { key: "full", label: "Full" },
+  { key: "category", label: "Category" },
+  { key: "date_range", label: "Date range" },
 ];
 
 const CATEGORIES = [
@@ -33,8 +33,8 @@ const CATEGORIES = [
 ];
 
 const OUTPUT_TABS = [
-  { key: "nl", label: "NATURAL LANGUAGE" },
-  { key: "json", label: "JSON DATA" },
+  { key: "nl", label: "Natural language" },
+  { key: "json", label: "JSON data" },
 ];
 
 export default function SummariesPage() {
@@ -129,28 +129,28 @@ export default function SummariesPage() {
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
-      <GlowText as="h1">AI HEALTH SUMMARY</GlowText>
+      <GlowText as="h1">AI Health Summary</GlowText>
 
       {/* Patient Selector */}
       <RetroCard>
         <RetroCardContent>
           <label
-            className="text-xs tracking-wider block mb-2"
+            className="text-xs font-medium block mb-2"
             style={{
-              color: "var(--retro-text-dim)",
-              fontFamily: "var(--font-display)",
+              color: "var(--theme-text-dim)",
+              fontFamily: "var(--font-body)",
             }}
           >
-            SELECT PATIENT
+            Select patient
           </label>
           <select
             value={selectedPatient}
             onChange={(e) => setSelectedPatient(e.target.value)}
             className="w-full px-3 py-2 text-sm border"
             style={{
-              backgroundColor: "var(--retro-bg-deep)",
-              borderColor: "var(--retro-border)",
-              color: "var(--retro-text)",
+              backgroundColor: "var(--theme-bg-deep)",
+              borderColor: "var(--theme-border)",
+              color: "var(--theme-text)",
               fontFamily: "var(--font-mono)",
               borderRadius: "4px",
             }}
@@ -176,17 +176,17 @@ export default function SummariesPage() {
                 <span
                   className="text-xs font-bold shrink-0 px-2 py-0.5"
                   style={{
-                    backgroundColor: "var(--retro-ochre)",
-                    color: "var(--retro-bg-deep)",
+                    backgroundColor: "var(--theme-ochre)",
+                    color: "var(--theme-bg-deep)",
                     borderRadius: "4px",
-                    fontFamily: "var(--font-display)",
+                    fontFamily: "var(--font-body)",
                   }}
                 >
-                  DEDUP
+                  Dedup
                 </span>
                 <p
                   className="text-xs leading-relaxed"
-                  style={{ color: "var(--retro-text-dim)" }}
+                  style={{ color: "var(--theme-text-dim)" }}
                 >
                   {result.duplicate_warning.message} Review in Admin &gt; DEDUP
                   tab.
@@ -200,7 +200,7 @@ export default function SummariesPage() {
       <RetroCard accentTop>
         <RetroCardHeader>
           <GlowText as="h3" glow={false}>
-            CONFIGURATION
+            Configuration
           </GlowText>
         </RetroCardHeader>
         <RetroCardContent>
@@ -208,13 +208,13 @@ export default function SummariesPage() {
             {/* Summary Type */}
             <div>
               <label
-                className="text-xs tracking-wider block mb-2"
+                className="text-xs font-medium block mb-2"
                 style={{
-                  color: "var(--retro-text-dim)",
-                  fontFamily: "var(--font-display)",
+                  color: "var(--theme-text-dim)",
+                  fontFamily: "var(--font-body)",
                 }}
               >
-                SUMMARY TYPE
+                Summary type
               </label>
               <RetroTabs
                 tabs={SUMMARY_TYPES}
@@ -227,22 +227,22 @@ export default function SummariesPage() {
             {summaryType === "category" && (
               <div>
                 <label
-                  className="text-xs tracking-wider block mb-2"
+                  className="text-xs font-medium block mb-2"
                   style={{
-                    color: "var(--retro-text-dim)",
-                    fontFamily: "var(--font-display)",
+                    color: "var(--theme-text-dim)",
+                    fontFamily: "var(--font-body)",
                   }}
                 >
-                  CATEGORY
+                  Category
                 </label>
                 <select
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
                   className="w-full px-3 py-2 text-sm border"
                   style={{
-                    backgroundColor: "var(--retro-bg-deep)",
-                    borderColor: "var(--retro-border)",
-                    color: "var(--retro-text)",
+                    backgroundColor: "var(--theme-bg-deep)",
+                    borderColor: "var(--theme-border)",
+                    color: "var(--theme-text)",
                     fontFamily: "var(--font-mono)",
                     borderRadius: "4px",
                   }}
@@ -261,13 +261,13 @@ export default function SummariesPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label
-                    className="text-xs tracking-wider block mb-2"
+                    className="text-xs font-medium block mb-2"
                     style={{
-                      color: "var(--retro-text-dim)",
-                      fontFamily: "var(--font-display)",
+                      color: "var(--theme-text-dim)",
+                      fontFamily: "var(--font-body)",
                     }}
                   >
-                    FROM
+                    From
                   </label>
                   <input
                     type="date"
@@ -275,9 +275,9 @@ export default function SummariesPage() {
                     onChange={(e) => setDateFrom(e.target.value)}
                     className="w-full px-3 py-2 text-sm border"
                     style={{
-                      backgroundColor: "var(--retro-bg-deep)",
-                      borderColor: "var(--retro-border)",
-                      color: "var(--retro-text)",
+                      backgroundColor: "var(--theme-bg-deep)",
+                      borderColor: "var(--theme-border)",
+                      color: "var(--theme-text)",
                       fontFamily: "var(--font-mono)",
                       borderRadius: "4px",
                     }}
@@ -285,13 +285,13 @@ export default function SummariesPage() {
                 </div>
                 <div>
                   <label
-                    className="text-xs tracking-wider block mb-2"
+                    className="text-xs font-medium block mb-2"
                     style={{
-                      color: "var(--retro-text-dim)",
-                      fontFamily: "var(--font-display)",
+                      color: "var(--theme-text-dim)",
+                      fontFamily: "var(--font-body)",
                     }}
                   >
-                    TO
+                    To
                   </label>
                   <input
                     type="date"
@@ -299,9 +299,9 @@ export default function SummariesPage() {
                     onChange={(e) => setDateTo(e.target.value)}
                     className="w-full px-3 py-2 text-sm border"
                     style={{
-                      backgroundColor: "var(--retro-bg-deep)",
-                      borderColor: "var(--retro-border)",
-                      color: "var(--retro-text)",
+                      backgroundColor: "var(--theme-bg-deep)",
+                      borderColor: "var(--theme-border)",
+                      color: "var(--theme-text)",
                       fontFamily: "var(--font-mono)",
                       borderRadius: "4px",
                     }}
@@ -313,13 +313,13 @@ export default function SummariesPage() {
             {/* Output Format */}
             <div>
               <label
-                className="text-xs tracking-wider block mb-2"
+                className="text-xs font-medium block mb-2"
                 style={{
-                  color: "var(--retro-text-dim)",
-                  fontFamily: "var(--font-display)",
+                  color: "var(--theme-text-dim)",
+                  fontFamily: "var(--font-body)",
                 }}
               >
-                OUTPUT FORMAT
+                Output format
               </label>
               <div className="flex gap-4">
                 {[
@@ -339,8 +339,8 @@ export default function SummariesPage() {
                     <span
                       className="text-xs"
                       style={{
-                        color: "var(--retro-text-dim)",
-                        fontFamily: "var(--font-display)",
+                        color: "var(--theme-text-dim)",
+                        fontFamily: "var(--font-body)",
                       }}
                     >
                       {opt.label}
@@ -354,13 +354,13 @@ export default function SummariesPage() {
             <div>
               <button
                 onClick={() => setShowCustomize(!showCustomize)}
-                className="text-xs tracking-wider cursor-pointer"
+                className="text-xs cursor-pointer font-medium"
                 style={{
-                  color: "var(--retro-amber-dim)",
-                  fontFamily: "var(--font-display)",
+                  color: "var(--theme-amber-dim)",
+                  fontFamily: "var(--font-body)",
                 }}
               >
-                {showCustomize ? "- HIDE" : "+"} CUSTOMIZE PROMPT
+                {showCustomize ? "Hide prompt options" : "Customize prompt"}
               </button>
               {showCustomize && (
                 <div className="mt-2">
@@ -371,9 +371,9 @@ export default function SummariesPage() {
                     rows={6}
                     className="w-full px-3 py-2 text-xs border resize-y"
                     style={{
-                      backgroundColor: "var(--retro-bg-deep)",
-                      borderColor: "var(--retro-border)",
-                      color: "var(--retro-text)",
+                      backgroundColor: "var(--theme-bg-deep)",
+                      borderColor: "var(--theme-border)",
+                      color: "var(--theme-text)",
                       fontFamily: "var(--font-mono)",
                       borderRadius: "4px",
                     }}
@@ -392,13 +392,13 @@ export default function SummariesPage() {
           onClick={handleGenerate}
           disabled={loading || !selectedPatient}
         >
-          {loading ? "GENERATING..." : "GENERATE SUMMARY"}
+          {loading ? "Generating..." : "Generate summary"}
         </RetroButton>
       </div>
 
       {/* Loading State */}
       {loading && (
-        <RetroLoadingState text="CONTACTING GEMINI 3 FLASH" />
+        <RetroLoadingState text="Generating summary" />
       )}
 
       {/* Error */}
@@ -409,15 +409,15 @@ export default function SummariesPage() {
               <span
                 className="text-xs font-bold shrink-0 px-2 py-0.5"
                 style={{
-                  backgroundColor: "var(--retro-terracotta)",
-                  color: "var(--retro-text)",
+                  backgroundColor: "var(--theme-terracotta)",
+                  color: "var(--theme-text)",
                   borderRadius: "4px",
-                  fontFamily: "var(--font-display)",
+                  fontFamily: "var(--font-body)",
                 }}
               >
                 ERROR
               </span>
-              <p className="text-xs" style={{ color: "var(--retro-text-dim)" }}>
+              <p className="text-xs" style={{ color: "var(--theme-text-dim)" }}>
                 {error}
               </p>
             </div>
@@ -431,14 +431,14 @@ export default function SummariesPage() {
           <RetroCardHeader>
             <div className="flex items-center justify-between">
               <GlowText as="h3" glow={false}>
-                SUMMARY RESULTS
+                Summary results
               </GlowText>
               <div className="flex items-center gap-4">
                 <span
                   className="text-xs"
-                  style={{ color: "var(--retro-text-dim)" }}
+                  style={{ color: "var(--theme-text-dim)" }}
                 >
-                  {result.record_count} RECORDS | {result.model_used}
+                  {result.record_count} records | {result.model_used}
                 </span>
               </div>
             </div>
@@ -459,11 +459,11 @@ export default function SummariesPage() {
                 <div
                   className="p-4 text-xs leading-relaxed whitespace-pre-wrap overflow-auto max-h-[600px]"
                   style={{
-                    backgroundColor: "var(--retro-bg-deep)",
-                    color: "var(--retro-text-dim)",
+                    backgroundColor: "var(--theme-bg-deep)",
+                    color: "var(--theme-text-dim)",
                     fontFamily: "var(--font-mono)",
                     borderRadius: "4px",
-                    border: "1px solid var(--retro-border)",
+                    border: "1px solid var(--theme-border)",
                   }}
                 >
                   {result.natural_language}
@@ -482,16 +482,16 @@ export default function SummariesPage() {
                       )
                     }
                   >
-                    COPY
+                    Copy
                   </RetroButton>
                   <pre
                     className="p-4 text-xs overflow-auto max-h-[600px]"
                     style={{
-                      backgroundColor: "var(--retro-bg-deep)",
-                      color: "var(--retro-sage)",
+                      backgroundColor: "var(--theme-bg-deep)",
+                      color: "var(--theme-sage)",
                       fontFamily: "var(--font-mono)",
                       borderRadius: "4px",
-                      border: "1px solid var(--retro-border)",
+                      border: "1px solid var(--theme-border)",
                     }}
                   >
                     {JSON.stringify(result.json_data, null, 2)}
@@ -504,16 +504,16 @@ export default function SummariesPage() {
                 Object.keys(result.de_identification_report).length > 0 && (
                   <div
                     className="border-t pt-3 mt-3"
-                    style={{ borderColor: "var(--retro-border)" }}
+                    style={{ borderColor: "var(--theme-border)" }}
                   >
                     <p
-                      className="text-xs tracking-wider mb-2"
+                      className="text-xs font-medium mb-2"
                       style={{
-                        color: "var(--retro-text-muted)",
-                        fontFamily: "var(--font-display)",
+                        color: "var(--theme-text-muted)",
+                        fontFamily: "var(--font-body)",
                       }}
                     >
-                      DE-IDENTIFICATION REPORT
+                      De-identification report
                     </p>
                     <div className="grid grid-cols-2 gap-2">
                       {Object.entries(result.de_identification_report).map(
@@ -522,19 +522,19 @@ export default function SummariesPage() {
                             key={key}
                             className="flex justify-between py-1 px-2"
                             style={{
-                              backgroundColor: "var(--retro-bg-deep)",
+                              backgroundColor: "var(--theme-bg-deep)",
                               borderRadius: "4px",
                             }}
                           >
                             <span
                               className="text-xs"
-                              style={{ color: "var(--retro-text-muted)" }}
+                              style={{ color: "var(--theme-text-muted)" }}
                             >
                               {key.replace(/_/g, " ").toUpperCase()}
                             </span>
                             <span
                               className="text-xs font-medium"
-                              style={{ color: "var(--retro-amber)" }}
+                              style={{ color: "var(--theme-amber)" }}
                             >
                               {val}
                             </span>
@@ -556,17 +556,17 @@ export default function SummariesPage() {
             <span
               className="text-xs font-bold shrink-0 px-2 py-0.5"
               style={{
-                backgroundColor: "var(--retro-terracotta)",
-                color: "var(--retro-text)",
+                backgroundColor: "var(--theme-terracotta)",
+                color: "var(--theme-text)",
                 borderRadius: "4px",
-                fontFamily: "var(--font-display)",
+                fontFamily: "var(--font-body)",
               }}
             >
-              WARNING
+              Notice
             </span>
             <p
               className="text-xs leading-relaxed"
-              style={{ color: "var(--retro-text-dim)" }}
+              style={{ color: "var(--theme-text-dim)" }}
             >
               AI summaries are for personal reference only and do not constitute
               medical advice, diagnoses, or treatment recommendations. All health
@@ -581,13 +581,13 @@ export default function SummariesPage() {
       <div>
         <button
           onClick={() => setShowHistory(!showHistory)}
-          className="text-xs tracking-wider cursor-pointer"
+          className="text-xs cursor-pointer font-medium"
           style={{
-            color: "var(--retro-text-dim)",
-            fontFamily: "var(--font-display)",
+            color: "var(--theme-text-dim)",
+            fontFamily: "var(--font-body)",
           }}
         >
-          {showHistory ? "- HIDE" : "+"} SUMMARY HISTORY ({history.length})
+          {showHistory ? "Hide history" : "Summary history"} ({history.length})
         </button>
         {showHistory && history.length > 0 && (
           <div className="mt-3 space-y-2">
@@ -598,20 +598,20 @@ export default function SummariesPage() {
                     <div>
                       <span
                         className="text-xs font-medium"
-                        style={{ color: "var(--retro-text)" }}
+                        style={{ color: "var(--theme-text)" }}
                       >
-                        {h.summary_type.toUpperCase()} SUMMARY
+                        {h.summary_type} summary
                       </span>
                       <span
                         className="text-xs ml-3"
-                        style={{ color: "var(--retro-text-muted)" }}
+                        style={{ color: "var(--theme-text-muted)" }}
                       >
                         {h.record_count} records
                       </span>
                     </div>
                     <span
                       className="text-xs"
-                      style={{ color: "var(--retro-text-muted)" }}
+                      style={{ color: "var(--theme-text-muted)" }}
                     >
                       {h.generated_at
                         ? new Date(h.generated_at).toLocaleDateString()

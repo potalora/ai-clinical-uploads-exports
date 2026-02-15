@@ -6,7 +6,6 @@ import Link from "next/link";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/useAuthStore";
 import type { TokenResponse } from "@/types/api";
-import { CRTOverlay } from "@/components/retro/CRTOverlay";
 import { GlowText } from "@/components/retro/GlowText";
 import { RetroInput } from "@/components/retro/RetroInput";
 import { RetroButton } from "@/components/retro/RetroButton";
@@ -41,34 +40,32 @@ export default function LoginPage() {
   return (
     <div
       className="flex min-h-screen items-center justify-center"
-      style={{ backgroundColor: "var(--retro-bg-deep)" }}
+      style={{ backgroundColor: "var(--theme-bg-deep)" }}
     >
-      <CRTOverlay />
       <div
-        className="w-full max-w-sm border p-8 space-y-6"
+        className="w-full max-w-sm border p-8 space-y-6 rounded-lg"
         style={{
-          backgroundColor: "var(--retro-bg-card)",
-          borderColor: "var(--retro-border)",
-          borderRadius: "4px",
+          backgroundColor: "var(--theme-bg-card)",
+          borderColor: "var(--theme-border)",
         }}
       >
         {/* Header */}
         <div className="text-center space-y-2">
           <GlowText as="h1" className="text-xl">
-            MEDTIMELINE
+            MedTimeline
           </GlowText>
           <p
-            className="text-xs tracking-widest uppercase"
+            className="text-sm"
             style={{
-              color: "var(--retro-text-dim)",
-              fontFamily: "var(--font-display)",
+              color: "var(--theme-text-dim)",
+              fontFamily: "var(--font-body)",
             }}
           >
-            ACCESS TERMINAL
+            Sign in to your account
           </p>
           <div
             className="mx-auto w-32 h-px"
-            style={{ backgroundColor: "var(--retro-amber-dim)" }}
+            style={{ backgroundColor: "var(--theme-amber-dim)" }}
           />
         </div>
 
@@ -78,8 +75,8 @@ export default function LoginPage() {
             className="p-3 border text-xs"
             style={{
               backgroundColor: "var(--record-allergy-bg)",
-              borderColor: "var(--retro-terracotta)",
-              color: "var(--retro-terracotta)",
+              borderColor: "var(--theme-terracotta)",
+              color: "var(--theme-terracotta)",
               borderRadius: "4px",
             }}
           >
@@ -91,7 +88,7 @@ export default function LoginPage() {
         <form onSubmit={handleSubmit} className="space-y-4">
           <RetroInput
             id="email"
-            label="EMAIL"
+            label="Email"
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
@@ -100,7 +97,7 @@ export default function LoginPage() {
           />
           <RetroInput
             id="password"
-            label="PASSWORD"
+            label="Password"
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -112,21 +109,21 @@ export default function LoginPage() {
             className="w-full"
             disabled={loading}
           >
-            {loading ? "AUTHENTICATING..." : "AUTHENTICATE"}
+            {loading ? "Signing in..." : "Sign in"}
           </RetroButton>
         </form>
 
         <p
           className="text-center text-xs"
-          style={{ color: "var(--retro-text-muted)" }}
+          style={{ color: "var(--theme-text-muted)" }}
         >
           No account?{" "}
           <Link
             href="/register"
             className="underline transition-colors"
-            style={{ color: "var(--retro-amber-dim)" }}
-            onMouseEnter={(e) => (e.currentTarget.style.color = "var(--retro-amber)")}
-            onMouseLeave={(e) => (e.currentTarget.style.color = "var(--retro-amber-dim)")}
+            style={{ color: "var(--theme-amber-dim)" }}
+            onMouseEnter={(e) => (e.currentTarget.style.color = "var(--theme-amber)")}
+            onMouseLeave={(e) => (e.currentTarget.style.color = "var(--theme-amber-dim)")}
           >
             Register
           </Link>

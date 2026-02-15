@@ -18,13 +18,12 @@ export function RetroBadge({ recordType, short = false, className }: RetroBadgeP
   return (
     <span
       className={cn(
-        "inline-flex items-center px-2 py-0.5 text-xs font-medium uppercase tracking-wider",
+        "inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-md",
         className,
       )}
       style={{
         backgroundColor: colors.bg,
         color: colors.text,
-        borderRadius: "4px",
       }}
     >
       {label}

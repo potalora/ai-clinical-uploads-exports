@@ -12,22 +12,13 @@ export function RetroCard({ className, accentTop, children }: RetroCardProps) {
   return (
     <div
       className={cn(
-        "border transition-colors",
+        "border rounded-lg transition-shadow duration-200 theme-shadow",
         className,
       )}
       style={{
-        backgroundColor: "var(--retro-bg-card)",
-        borderColor: "var(--retro-border)",
-        borderRadius: "4px",
-        borderTop: accentTop ? "2px solid var(--retro-amber)" : undefined,
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.borderColor = "var(--retro-border-active)";
-        if (accentTop) e.currentTarget.style.borderTop = "2px solid var(--retro-amber)";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.borderColor = "var(--retro-border)";
-        if (accentTop) e.currentTarget.style.borderTop = "2px solid var(--retro-amber)";
+        backgroundColor: "var(--theme-bg-card)",
+        borderColor: "var(--theme-border)",
+        borderTop: accentTop ? "2px solid var(--theme-amber)" : undefined,
       }}
     >
       {children}
@@ -45,7 +36,7 @@ export function RetroCardHeader({
   return (
     <div
       className={cn("px-4 py-3 border-b", className)}
-      style={{ borderColor: "var(--retro-border)" }}
+      style={{ borderColor: "var(--theme-border)" }}
     >
       {children}
     </div>

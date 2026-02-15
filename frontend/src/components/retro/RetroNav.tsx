@@ -10,10 +10,10 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
-  { key: "F1", label: "HOME", href: "/" },
-  { key: "F2", label: "TIMELINE", href: "/timeline" },
-  { key: "F3", label: "SUMMARIZE", href: "/summaries" },
-  { key: "F4", label: "ADMIN", href: "/admin" },
+  { label: "Home", href: "/" },
+  { label: "Timeline", href: "/timeline" },
+  { label: "Summaries", href: "/summaries" },
+  { label: "Admin", href: "/admin" },
 ];
 
 function isActive(pathname: string, href: string): boolean {
@@ -30,17 +30,6 @@ export function RetroNav() {
 
   useEffect(() => setMounted(true), []);
 
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "F1") { e.preventDefault(); router.push("/"); }
-      if (e.key === "F2") { e.preventDefault(); router.push("/timeline"); }
-      if (e.key === "F3") { e.preventDefault(); router.push("/summaries"); }
-      if (e.key === "F4") { e.preventDefault(); router.push("/admin"); }
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [router]);
-
   const handleLogout = async () => {
     try {
       await api.post("/auth/logout", undefined, accessToken ?? undefined);
@@ -55,21 +44,21 @@ export function RetroNav() {
     <nav
       className="flex h-14 items-center justify-between border-b px-4"
       style={{
-        backgroundColor: "var(--retro-bg-surface)",
-        borderColor: "var(--retro-border)",
+        backgroundColor: "var(--theme-bg-surface)",
+        borderColor: "var(--theme-border)",
       }}
     >
       {/* Logo */}
       <Link
         href="/"
         className="flex items-center gap-2 shrink-0"
-        style={{ fontFamily: "var(--font-display)" }}
+        style={{ fontFamily: "var(--font-body)" }}
       >
         <span
-          className="crt-glow text-sm font-semibold tracking-wider"
-          style={{ color: "var(--retro-amber)" }}
+          className="text-sm font-semibold"
+          style={{ color: "var(--theme-amber)" }}
         >
-          AI WEB RECORDS v1.0
+          MedTimeline
         </span>
       </Link>
 
@@ -82,26 +71,24 @@ export function RetroNav() {
               key={item.href}
               href={item.href}
               className={cn(
-                "relative px-3 py-2 text-xs font-medium tracking-wider transition-colors",
-                active
-                  ? "crt-glow"
-                  : "hover:text-[var(--retro-text)]"
+                "relative px-3 py-2 text-sm font-medium transition-colors duration-200",
               )}
               style={{
-                color: active ? "var(--retro-amber)" : "var(--retro-text-dim)",
-                fontFamily: "var(--font-display)",
+                color: active ? "var(--theme-amber)" : "var(--theme-text-dim)",
+                fontFamily: "var(--font-body)",
+              }}
+              onMouseEnter={(e) => {
+                if (!active) e.currentTarget.style.color = "var(--theme-text)";
+              }}
+              onMouseLeave={(e) => {
+                if (!active) e.currentTarget.style.color = "var(--theme-text-dim)";
               }}
             >
-              <span className="hidden sm:inline">[{item.key}]</span>
-              <span className="sm:hidden">{item.label.charAt(0)}</span>
-              <span className="hidden sm:inline ml-1">{item.label}</span>
-              {/* Active underline */}
+              {item.label}
               {active && (
                 <span
-                  className="absolute bottom-0 left-2 right-2 h-px retro-underline-glow"
-                  style={{
-                    backgroundColor: "var(--retro-amber)",
-                  }}
+                  className="absolute bottom-0 left-2 right-2 h-0.5 rounded-full"
+                  style={{ backgroundColor: "var(--theme-amber)" }}
                 />
               )}
             </Link>
@@ -111,14 +98,13 @@ export function RetroNav() {
 
       {/* User area */}
       <div className="flex items-center gap-3 shrink-0">
-        {/* Theme toggle */}
         {mounted && (
           <button
             onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-            className="p-1.5 transition-colors cursor-pointer"
-            style={{ color: "var(--retro-text-dim)" }}
-            onMouseEnter={(e) => (e.currentTarget.style.color = "var(--retro-amber)")}
-            onMouseLeave={(e) => (e.currentTarget.style.color = "var(--retro-text-dim)")}
+            className="p-1.5 transition-colors duration-200 cursor-pointer rounded-md"
+            style={{ color: "var(--theme-text-dim)" }}
+            onMouseEnter={(e) => (e.currentTarget.style.color = "var(--theme-amber)")}
+            onMouseLeave={(e) => (e.currentTarget.style.color = "var(--theme-text-dim)")}
             aria-label="Toggle theme"
           >
             {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
@@ -126,15 +112,15 @@ export function RetroNav() {
         )}
         <button
           onClick={handleLogout}
-          className="text-xs tracking-wider transition-colors cursor-pointer"
+          className="text-xs font-medium transition-colors duration-200 cursor-pointer"
           style={{
-            color: "var(--retro-text-dim)",
-            fontFamily: "var(--font-display)",
+            color: "var(--theme-text-dim)",
+            fontFamily: "var(--font-body)",
           }}
-          onMouseEnter={(e) => (e.currentTarget.style.color = "var(--retro-terracotta)")}
-          onMouseLeave={(e) => (e.currentTarget.style.color = "var(--retro-text-dim)")}
+          onMouseEnter={(e) => (e.currentTarget.style.color = "var(--theme-terracotta)")}
+          onMouseLeave={(e) => (e.currentTarget.style.color = "var(--theme-text-dim)")}
         >
-          SIGN OUT
+          Sign out
         </button>
       </div>
     </nav>

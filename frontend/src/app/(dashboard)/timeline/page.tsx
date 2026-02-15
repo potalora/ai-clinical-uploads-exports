@@ -40,7 +40,7 @@ function groupByMonth(events: TimelineEvent[]): { label: string; events: Timelin
     return b[0].localeCompare(a[0]);
   });
   return sorted.map(([key, events]) => {
-    if (key === "undated") return { label: "UNDATED", events };
+    if (key === "undated") return { label: "Undated", events };
     const [y, m] = key.split("-");
     const months = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
     return { label: `${months[parseInt(m) - 1]} ${y}`, events };
@@ -78,13 +78,13 @@ export default function TimelinePage() {
   return (
     <div className="space-y-6">
       <div className="flex items-baseline justify-between gap-4">
-        <GlowText as="h1">TIMELINE</GlowText>
+        <GlowText as="h1">Timeline</GlowText>
         {data && (
           <span
-            className="text-xs tracking-wider"
-            style={{ color: "var(--retro-text-dim)" }}
+            className="text-xs"
+            style={{ color: "var(--theme-text-dim)" }}
           >
-            {data.total} EVENTS
+            {data.total} events
           </span>
         )}
       </div>
@@ -97,24 +97,23 @@ export default function TimelinePage() {
             <button
               key={ft.value}
               onClick={() => setFilter(ft.value)}
-              className="px-3 py-1.5 text-xs font-medium uppercase tracking-wider transition-colors cursor-pointer"
+              className="px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer rounded-md"
               style={{
-                backgroundColor: active ? "var(--retro-amber)" : "var(--retro-bg-card)",
-                color: active ? "var(--retro-bg-deep)" : "var(--retro-text-dim)",
-                borderRadius: "4px",
-                border: `1px solid ${active ? "var(--retro-amber)" : "var(--retro-border)"}`,
-                fontFamily: "var(--font-display)",
+                backgroundColor: active ? "var(--theme-amber)" : "var(--theme-bg-card)",
+                color: active ? "var(--theme-bg-deep)" : "var(--theme-text-dim)",
+                border: `1px solid ${active ? "var(--theme-amber)" : "var(--theme-border)"}`,
+                fontFamily: "var(--font-body)",
               }}
               onMouseEnter={(e) => {
                 if (!active) {
-                  e.currentTarget.style.borderColor = "var(--retro-border-active)";
-                  e.currentTarget.style.color = "var(--retro-text)";
+                  e.currentTarget.style.borderColor = "var(--theme-border-active)";
+                  e.currentTarget.style.color = "var(--theme-text)";
                 }
               }}
               onMouseLeave={(e) => {
                 if (!active) {
-                  e.currentTarget.style.borderColor = "var(--retro-border)";
-                  e.currentTarget.style.color = "var(--retro-text-dim)";
+                  e.currentTarget.style.borderColor = "var(--theme-border)";
+                  e.currentTarget.style.color = "var(--theme-text-dim)";
                 }
               }}
             >
@@ -125,25 +124,24 @@ export default function TimelinePage() {
       </div>
 
       {loading ? (
-        <RetroLoadingState text="LOADING TIMELINE" />
+        <RetroLoadingState text="Loading timeline" />
       ) : sortedEvents.length === 0 ? (
         <div className="py-16 text-center">
           <p
-            className="text-sm tracking-wider"
+            className="text-sm"
             style={{
-              color: "var(--retro-text-muted)",
-              fontFamily: "var(--font-display)",
+              color: "var(--theme-text-muted)",
             }}
           >
-            NO EVENTS IN DATABASE
+            No events found
           </p>
           {filter && (
             <button
               onClick={() => setFilter("")}
-              className="mt-3 text-xs uppercase tracking-wider cursor-pointer"
-              style={{ color: "var(--retro-amber-dim)" }}
+              className="mt-3 text-xs cursor-pointer font-medium"
+              style={{ color: "var(--theme-amber-dim)" }}
             >
-              CLEAR FILTER
+              Clear filter
             </button>
           )}
         </div>
@@ -152,7 +150,7 @@ export default function TimelinePage() {
           {/* Vertical line */}
           <div
             className="absolute left-2 top-0 bottom-0 w-px"
-            style={{ backgroundColor: "var(--retro-amber-dim)" }}
+            style={{ backgroundColor: "var(--theme-amber-dim)" }}
           />
 
           {groups.map((group) => (
@@ -161,20 +159,20 @@ export default function TimelinePage() {
               <div className="relative flex items-center gap-3 mb-3 -ml-6">
                 <div
                   className="w-5 h-px"
-                  style={{ backgroundColor: "var(--retro-amber-dim)" }}
+                  style={{ backgroundColor: "var(--theme-amber-dim)" }}
                 />
                 <span
-                  className="text-xs font-semibold tracking-widest"
+                  className="text-xs font-semibold"
                   style={{
-                    color: "var(--retro-amber)",
-                    fontFamily: "var(--font-display)",
+                    color: "var(--theme-amber)",
+                    fontFamily: "var(--font-body)",
                   }}
                 >
                   {group.label}
                 </span>
                 <div
                   className="flex-1 h-px"
-                  style={{ backgroundColor: "var(--retro-border)" }}
+                  style={{ backgroundColor: "var(--theme-border)" }}
                 />
               </div>
 
@@ -190,11 +188,11 @@ export default function TimelinePage() {
                       style={{ paddingLeft: "0.5rem" }}
                       onMouseEnter={(e) => {
                         const card = e.currentTarget.querySelector("[data-card]") as HTMLElement;
-                        if (card) card.style.borderColor = "var(--retro-border-active)";
+                        if (card) card.style.borderColor = "var(--theme-border-active)";
                       }}
                       onMouseLeave={(e) => {
                         const card = e.currentTarget.querySelector("[data-card]") as HTMLElement;
-                        if (card) card.style.borderColor = "var(--retro-border)";
+                        if (card) card.style.borderColor = "var(--theme-border)";
                       }}
                     >
                       {/* Dot on timeline */}
@@ -212,8 +210,8 @@ export default function TimelinePage() {
                         data-card
                         className="flex-1 border px-3 py-2 transition-colors"
                         style={{
-                          backgroundColor: "var(--retro-bg-card)",
-                          borderColor: "var(--retro-border)",
+                          backgroundColor: "var(--theme-bg-card)",
+                          borderColor: "var(--theme-border)",
                           borderRadius: "4px",
                         }}
                       >
@@ -223,7 +221,7 @@ export default function TimelinePage() {
                               <RetroBadge recordType={event.record_type} short />
                               <span
                                 className="text-sm truncate"
-                                style={{ color: "var(--retro-text)" }}
+                                style={{ color: "var(--theme-text)" }}
                               >
                                 {event.display_text}
                               </span>
@@ -231,7 +229,7 @@ export default function TimelinePage() {
                             {event.code_display && (
                               <p
                                 className="text-xs"
-                                style={{ color: "var(--retro-text-dim)" }}
+                                style={{ color: "var(--theme-text-dim)" }}
                               >
                                 {event.code_display}
                               </p>
@@ -239,7 +237,7 @@ export default function TimelinePage() {
                           </div>
                           <span
                             className="text-xs whitespace-nowrap shrink-0"
-                            style={{ color: "var(--retro-text-muted)" }}
+                            style={{ color: "var(--theme-text-muted)" }}
                           >
                             {event.effective_date
                               ? new Date(event.effective_date).toLocaleDateString()

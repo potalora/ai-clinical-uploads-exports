@@ -6,7 +6,7 @@ interface RetroLoadingStateProps {
   text?: string;
 }
 
-export function RetroLoadingState({ text = "LOADING DATA" }: RetroLoadingStateProps) {
+export function RetroLoadingState({ text = "Loading" }: RetroLoadingStateProps) {
   const [dots, setDots] = useState("");
 
   useEffect(() => {
@@ -19,23 +19,14 @@ export function RetroLoadingState({ text = "LOADING DATA" }: RetroLoadingStatePr
   return (
     <div className="flex items-center justify-center py-16">
       <span
-        className="text-sm tracking-wider"
+        className="text-sm"
         style={{
-          color: "var(--retro-text-dim)",
-          fontFamily: "var(--font-display)",
+          color: "var(--theme-text-dim)",
+          fontFamily: "var(--font-body)",
         }}
       >
         {text}
         <span className="inline-block w-6 text-left">{dots}</span>
-        <span
-          className="ml-1 inline-block"
-          style={{
-            animation: "cursor-blink 1s step-end infinite",
-            color: "var(--retro-amber)",
-          }}
-        >
-          &#x2588;
-        </span>
       </span>
     </div>
   );

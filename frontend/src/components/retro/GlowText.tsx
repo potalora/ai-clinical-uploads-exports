@@ -15,27 +15,22 @@ const sizeMap: Record<string, string> = {
   h3: "text-lg font-semibold",
   h4: "text-base font-semibold",
   h5: "text-sm font-semibold",
-  h6: "text-xs font-semibold uppercase tracking-wider",
+  h6: "text-xs font-semibold",
   span: "",
   p: "",
 };
 
 export function GlowText({
   as: Tag = "h1",
-  glow = true,
   className,
   children,
 }: GlowTextProps) {
   return (
     <Tag
-      className={cn(
-        sizeMap[Tag],
-        glow && "crt-glow",
-        className,
-      )}
+      className={cn(sizeMap[Tag], className)}
       style={{
-        fontFamily: "var(--font-display)",
-        color: "var(--retro-text)",
+        fontFamily: "var(--font-body)",
+        color: "var(--theme-text)",
       }}
     >
       {children}

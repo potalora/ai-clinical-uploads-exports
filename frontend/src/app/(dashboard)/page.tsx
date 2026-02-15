@@ -27,7 +27,7 @@ export default function DashboardPage() {
   }, []);
 
   if (loading) {
-    return <RetroLoadingState text="LOADING DASHBOARD" />;
+    return <RetroLoadingState text="Loading dashboard" />;
   }
 
   const overview = data || {
@@ -54,14 +54,14 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6 retro-stagger">
-      <GlowText as="h1">SYSTEM STATUS</GlowText>
+      <GlowText as="h1">Dashboard</GlowText>
 
       <StatusReadout
         items={[
-          { label: "RECORDS", value: overview.total_records },
-          { label: "PATIENTS", value: overview.total_patients },
-          { label: "UPLOADS", value: overview.total_uploads },
-          { label: "RANGE", value: dateRange },
+          { label: "Records", value: overview.total_records },
+          { label: "Patients", value: overview.total_patients },
+          { label: "Uploads", value: overview.total_uploads },
+          { label: "Date range", value: dateRange },
         ]}
       />
 
@@ -69,7 +69,7 @@ export default function DashboardPage() {
       {Object.keys(overview.records_by_type).length > 0 && (
         <RetroCard>
           <RetroCardHeader>
-            <GlowText as="h3" glow={false}>RECORDS BY CATEGORY</GlowText>
+            <GlowText as="h3" glow={false}>Records by category</GlowText>
           </RetroCardHeader>
           <RetroCardContent>
             <div className="flex flex-wrap gap-2">
@@ -80,7 +80,7 @@ export default function DashboardPage() {
                   return (
                     <span
                       key={type}
-                      className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium uppercase tracking-wider"
+                      className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md"
                       style={{
                         backgroundColor: colors.bg,
                         color: colors.text,
@@ -99,19 +99,19 @@ export default function DashboardPage() {
       {/* Recent Records Feed */}
       <RetroCard>
         <RetroCardHeader>
-          <GlowText as="h3" glow={false}>RECENT ACTIVITY LOG</GlowText>
+          <GlowText as="h3" glow={false}>Recent activity</GlowText>
         </RetroCardHeader>
         <RetroCardContent>
           {overview.recent_records.length === 0 ? (
             <div className="py-8 text-center">
               <p
-                className="text-xs tracking-wider mb-3"
-                style={{ color: "var(--retro-text-muted)" }}
+                className="text-sm mb-3"
+                style={{ color: "var(--theme-text-muted)" }}
               >
-                NO RECORDS IN DATABASE
+                No records yet
               </p>
               <Link href="/admin?tab=upload">
-                <RetroButton variant="ghost">UPLOAD FIRST RECORDS</RetroButton>
+                <RetroButton variant="ghost">Upload records</RetroButton>
               </Link>
             </div>
           ) : (
@@ -126,7 +126,7 @@ export default function DashboardPage() {
       {/* CREATE SUMMARY CTA */}
       <div className="flex justify-center pt-2">
         <Link href="/summaries">
-          <RetroButton variant="large">CREATE SUMMARY</RetroButton>
+          <RetroButton variant="large">Create summary</RetroButton>
         </Link>
       </div>
 

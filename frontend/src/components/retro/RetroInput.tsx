@@ -12,8 +12,8 @@ export function RetroInput({ label, className, id, ...props }: RetroInputProps) 
       {label && (
         <label
           htmlFor={id}
-          className="text-xs uppercase tracking-wider"
-          style={{ color: "var(--retro-text-dim)" }}
+          className="text-xs font-medium"
+          style={{ color: "var(--theme-text-dim)" }}
         >
           {label}
         </label>
@@ -21,22 +21,21 @@ export function RetroInput({ label, className, id, ...props }: RetroInputProps) 
       <input
         id={id}
         className={cn(
-          "w-full px-3 py-2 text-sm border outline-none transition-colors",
+          "w-full px-3 py-2 text-sm border rounded-md outline-none transition-colors duration-200",
           className,
         )}
         style={{
-          backgroundColor: "var(--retro-bg-deep)",
-          color: "var(--retro-text)",
-          borderColor: "var(--retro-border)",
-          borderRadius: "4px",
+          backgroundColor: "var(--theme-bg-deep)",
+          color: "var(--theme-text)",
+          borderColor: "var(--theme-border)",
         }}
         onFocus={(e) => {
-          e.currentTarget.style.borderColor = "var(--retro-amber)";
-          e.currentTarget.classList.add("retro-focus-glow");
+          e.currentTarget.style.borderColor = "var(--theme-amber)";
+          e.currentTarget.style.boxShadow = "0 0 0 2px var(--theme-bg-deep), 0 0 0 4px var(--theme-amber)";
         }}
         onBlur={(e) => {
-          e.currentTarget.style.borderColor = "var(--retro-border)";
-          e.currentTarget.classList.remove("retro-focus-glow");
+          e.currentTarget.style.borderColor = "var(--theme-border)";
+          e.currentTarget.style.boxShadow = "none";
         }}
         {...props}
       />

@@ -12,27 +12,23 @@ interface StatusReadoutProps {
 export function StatusReadout({ items }: StatusReadoutProps) {
   return (
     <div
-      className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 border text-xs"
+      className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3 border rounded-lg text-sm"
       style={{
-        backgroundColor: "var(--retro-bg-surface)",
-        borderColor: "var(--retro-border)",
-        borderRadius: "4px",
+        backgroundColor: "var(--theme-bg-surface)",
+        borderColor: "var(--theme-border)",
       }}
     >
-      {items.map((item, i) => (
+      {items.map((item) => (
         <span key={item.label} className="flex items-center gap-2">
-          {i > 0 && (
-            <span style={{ color: "var(--retro-text-muted)" }}>|</span>
-          )}
           <span
-            className="uppercase tracking-wider"
-            style={{ color: "var(--retro-text-dim)" }}
+            className="text-xs font-medium"
+            style={{ color: "var(--theme-text-dim)" }}
           >
             {item.label}:
           </span>
           <span
             className="font-medium"
-            style={{ color: "var(--retro-text)" }}
+            style={{ color: "var(--theme-text)" }}
           >
             {item.value}
           </span>

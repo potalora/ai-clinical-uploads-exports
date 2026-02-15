@@ -38,31 +38,31 @@ export function RecordDetailSheet({ recordId, open, onClose }: RecordDetailSheet
       <SheetContent
         className="w-full sm:max-w-lg overflow-auto border-l"
         style={{
-          backgroundColor: "var(--retro-bg-surface)",
-          borderColor: "var(--retro-border)",
+          backgroundColor: "var(--theme-bg-surface)",
+          borderColor: "var(--theme-border)",
         }}
       >
         <SheetHeader>
           <SheetTitle
-            className="text-xs uppercase tracking-widest"
+            className="text-xs font-semibold"
             style={{
-              color: "var(--retro-amber)",
-              fontFamily: "var(--font-display)",
+              color: "var(--theme-amber)",
+              fontFamily: "var(--font-body)",
             }}
           >
-            DATA READOUT
+            Record Details
           </SheetTitle>
         </SheetHeader>
 
         {loading ? (
-          <RetroLoadingState text="LOADING RECORD" />
+          <RetroLoadingState text="Loading record" />
         ) : !record ? (
           <div className="py-8 text-center">
             <span
-              className="text-xs tracking-wider"
-              style={{ color: "var(--retro-text-muted)" }}
+              className="text-sm"
+              style={{ color: "var(--theme-text-muted)" }}
             >
-              RECORD NOT FOUND
+              Record not found
             </span>
           </div>
         ) : (
@@ -71,8 +71,8 @@ export function RecordDetailSheet({ recordId, open, onClose }: RecordDetailSheet
               <RetroBadge recordType={record.record_type} />
               {record.status && (
                 <span
-                  className="text-xs uppercase tracking-wider"
-                  style={{ color: "var(--retro-text-dim)" }}
+                  className="text-xs"
+                  style={{ color: "var(--theme-text-dim)" }}
                 >
                   {record.status}
                 </span>
@@ -81,19 +81,19 @@ export function RecordDetailSheet({ recordId, open, onClose }: RecordDetailSheet
 
             <p
               className="text-sm font-medium"
-              style={{ color: "var(--retro-text)" }}
+              style={{ color: "var(--theme-text)" }}
             >
               {record.display_text}
             </p>
 
             <div
               className="border-t pt-3 space-y-2"
-              style={{ borderColor: "var(--retro-border)" }}
+              style={{ borderColor: "var(--theme-border)" }}
             >
-              <DetailRow label="TYPE" value={record.record_type} />
+              <DetailRow label="Type" value={record.record_type} />
               <DetailRow label="FHIR" value={record.fhir_resource_type} />
               <DetailRow
-                label="DATE"
+                label="Date"
                 value={
                   record.effective_date
                     ? new Date(record.effective_date).toLocaleDateString("en-US", {
@@ -104,21 +104,21 @@ export function RecordDetailSheet({ recordId, open, onClose }: RecordDetailSheet
                     : "Not specified"
                 }
               />
-              <DetailRow label="SOURCE" value={record.source_format} />
+              <DetailRow label="Source" value={record.source_format} />
               {record.code_system && (
-                <DetailRow label="CODE SYSTEM" value={record.code_system} mono />
+                <DetailRow label="Code system" value={record.code_system} mono />
               )}
               {record.code_value && (
-                <DetailRow label="CODE" value={record.code_value} mono />
+                <DetailRow label="Code" value={record.code_value} mono />
               )}
               {record.code_display && (
-                <DetailRow label="CODE DISPLAY" value={record.code_display} />
+                <DetailRow label="Code display" value={record.code_display} />
               )}
               {record.category && record.category.length > 0 && (
-                <DetailRow label="CATEGORIES" value={record.category.join(", ")} />
+                <DetailRow label="Categories" value={record.category.join(", ")} />
               )}
               <DetailRow
-                label="CREATED"
+                label="Created"
                 value={new Date(record.created_at).toLocaleString()}
               />
             </div>
@@ -126,25 +126,25 @@ export function RecordDetailSheet({ recordId, open, onClose }: RecordDetailSheet
             {/* FHIR JSON toggle */}
             <div
               className="border-t pt-3"
-              style={{ borderColor: "var(--retro-border)" }}
+              style={{ borderColor: "var(--theme-border)" }}
             >
               <button
                 onClick={() => setShowFhir(!showFhir)}
-                className="text-xs uppercase tracking-wider cursor-pointer transition-colors"
-                style={{ color: "var(--retro-amber-dim)" }}
-                onMouseEnter={(e) => (e.currentTarget.style.color = "var(--retro-amber)")}
-                onMouseLeave={(e) => (e.currentTarget.style.color = "var(--retro-amber-dim)")}
+                className="text-xs cursor-pointer transition-colors font-medium"
+                style={{ color: "var(--theme-amber-dim)" }}
+                onMouseEnter={(e) => (e.currentTarget.style.color = "var(--theme-amber)")}
+                onMouseLeave={(e) => (e.currentTarget.style.color = "var(--theme-amber-dim)")}
               >
-                {showFhir ? "[-] HIDE" : "[+] SHOW"} RAW FHIR
+                {showFhir ? "Hide FHIR JSON" : "Show FHIR JSON"}
               </button>
               {showFhir && (
                 <pre
                   className="mt-2 p-3 text-xs overflow-auto max-h-80"
                   style={{
-                    backgroundColor: "var(--retro-bg-deep)",
-                    color: "var(--retro-text-dim)",
+                    backgroundColor: "var(--theme-bg-deep)",
+                    color: "var(--theme-text-dim)",
                     borderRadius: "4px",
-                    border: "1px solid var(--retro-border)",
+                    border: "1px solid var(--theme-border)",
                   }}
                 >
                   {JSON.stringify(record.fhir_resource, null, 2)}
@@ -170,14 +170,14 @@ function DetailRow({
   return (
     <div className="flex items-baseline justify-between gap-3 py-1">
       <span
-        className="text-xs uppercase tracking-wider shrink-0"
-        style={{ color: "var(--retro-text-muted)" }}
+        className="text-xs font-medium shrink-0"
+        style={{ color: "var(--theme-text-muted)" }}
       >
         {label}
       </span>
       <span
         className={`text-xs text-right truncate ${mono ? "font-mono" : ""}`}
-        style={{ color: "var(--retro-text)" }}
+        style={{ color: "var(--theme-text)" }}
       >
         {value}
       </span>

@@ -20,10 +20,10 @@ export function RetroTableHeader({ children }: { children: React.ReactNode }) {
   return (
     <thead>
       <tr
-        className="border-b text-xs uppercase tracking-wider"
+        className="border-b text-xs font-medium"
         style={{
-          borderColor: "var(--retro-amber-dim)",
-          color: "var(--retro-amber)",
+          borderColor: "var(--theme-border)",
+          color: "var(--theme-text-dim)",
         }}
       >
         {children}
@@ -40,9 +40,7 @@ export function RetroTableHead({
   children: React.ReactNode;
 }) {
   return (
-    <th
-      className={cn("px-3 py-2 text-left font-medium", className)}
-    >
+    <th className={cn("px-3 py-2 text-left font-medium", className)}>
       {children}
     </th>
   );
@@ -64,14 +62,14 @@ export function RetroTableRow({
   return (
     <tr
       className={cn(
-        "border-b transition-colors",
+        "border-b transition-colors duration-150",
         onClick && "cursor-pointer",
         className,
       )}
-      style={{ borderColor: "var(--retro-border)" }}
+      style={{ borderColor: "var(--theme-border)" }}
       onClick={onClick}
       onMouseEnter={(e) => {
-        e.currentTarget.style.backgroundColor = "var(--retro-bg-card-hover)";
+        e.currentTarget.style.backgroundColor = "var(--theme-bg-card-hover)";
       }}
       onMouseLeave={(e) => {
         e.currentTarget.style.backgroundColor = "transparent";
@@ -92,7 +90,7 @@ export function RetroTableCell({
   return (
     <td
       className={cn("px-3 py-2", className)}
-      style={{ color: "var(--retro-text)" }}
+      style={{ color: "var(--theme-text)" }}
     >
       {children}
     </td>

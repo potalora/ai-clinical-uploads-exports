@@ -56,22 +56,22 @@
   --radius: 0.25rem;
 
   /* Theme palette tokens — light mode */
-  --retro-bg-deep: #f7f4ef;
-  --retro-bg-surface: #efe9df;
-  --retro-bg-card: #ffffff;
-  --retro-bg-card-hover: #faf6f0;
-  --retro-text: #2a2f26;
-  --retro-text-dim: #5c6358;
-  --retro-text-muted: #6b7265;
-  --retro-amber: #4a7c59;
-  --retro-amber-dim: #3d6649;
-  --retro-terracotta: #b54834;
-  --retro-sage: #5a7a50;
-  --retro-ochre: #b8860b;
-  --retro-sienna: #8b6914;
-  --retro-border: #d4cdc0;
-  --retro-border-active: #b8b0a0;
-  --retro-glow-rgb: 74, 124, 89;
+  --theme-bg-deep: #f7f4ef;
+  --theme-bg-surface: #efe9df;
+  --theme-bg-card: #ffffff;
+  --theme-bg-card-hover: #faf6f0;
+  --theme-text: #2a2f26;
+  --theme-text-dim: #5c6358;
+  --theme-text-muted: #6b7265;
+  --theme-amber: #4a7c59;
+  --theme-amber-dim: #3d6649;
+  --theme-terracotta: #b54834;
+  --theme-sage: #5a7a50;
+  --theme-ochre: #b8860b;
+  --theme-sienna: #8b6914;
+  --theme-border: #d4cdc0;
+  --theme-border-active: #b8b0a0;
+  --theme-glow-rgb: 74, 124, 89;
 
   /* shadcn semantic tokens — light mode */
   --background: #f7f4ef;
@@ -156,22 +156,22 @@
 
 .dark {
   /* Theme palette tokens — dark mode */
-  --retro-bg-deep: #1c2118;
-  --retro-bg-surface: #262f22;
-  --retro-bg-card: #2f3a2a;
-  --retro-bg-card-hover: #384432;
-  --retro-text: #e4dfd4;
-  --retro-text-dim: #a0a896;
-  --retro-text-muted: #8a9182;
-  --retro-amber: #6aa67a;
-  --retro-amber-dim: #558a62;
-  --retro-terracotta: #d06040;
-  --retro-sage: #7a9c60;
-  --retro-ochre: #d4a843;
-  --retro-sienna: #c4a020;
-  --retro-border: #3a4436;
-  --retro-border-active: #4a5a42;
-  --retro-glow-rgb: 106, 166, 122;
+  --theme-bg-deep: #1c2118;
+  --theme-bg-surface: #262f22;
+  --theme-bg-card: #2f3a2a;
+  --theme-bg-card-hover: #384432;
+  --theme-text: #e4dfd4;
+  --theme-text-dim: #a0a896;
+  --theme-text-muted: #8a9182;
+  --theme-amber: #6aa67a;
+  --theme-amber-dim: #558a62;
+  --theme-terracotta: #d06040;
+  --theme-sage: #7a9c60;
+  --theme-ochre: #d4a843;
+  --theme-sienna: #c4a020;
+  --theme-border: #3a4436;
+  --theme-border-active: #4a5a42;
+  --theme-glow-rgb: 106, 166, 122;
 
   /* shadcn semantic tokens — dark mode */
   --background: #1c2118;
@@ -279,16 +279,16 @@
 
 /* Focus ring */
 .theme-focus-ring {
-  box-shadow: 0 0 0 2px var(--retro-bg-deep), 0 0 0 4px var(--retro-amber);
+  box-shadow: 0 0 0 2px var(--theme-bg-deep), 0 0 0 4px var(--theme-amber);
 }
 
 /* Border variants */
 .theme-border {
-  border-color: var(--retro-border);
+  border-color: var(--theme-border);
 }
 
 .theme-border-active {
-  border-color: var(--retro-border-active);
+  border-color: var(--theme-border-active);
 }
 
 /* ============================================
@@ -334,16 +334,16 @@
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--retro-bg-deep);
+  background: var(--theme-bg-deep);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--retro-border);
+  background: var(--theme-border);
   border-radius: 1px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--retro-border-active);
+  background: var(--theme-border-active);
 }
 
 /* ============================================
@@ -351,12 +351,12 @@
    ============================================ */
 
 select {
-  background-color: var(--retro-bg-card);
-  color: var(--retro-text);
-  border-color: var(--retro-border);
+  background-color: var(--theme-bg-card);
+  color: var(--theme-text);
+  border-color: var(--theme-border);
 }
 
 select option {
-  background-color: var(--retro-bg-surface);
-  color: var(--retro-text);
+  background-color: var(--theme-bg-surface);
+  color: var(--theme-text);
 }

@@ -15,14 +15,9 @@ interface TerminalLogProps {
 }
 
 function formatTimestamp(dateStr: string | null): string {
-  if (!dateStr) return "[----.--.-- --:--]";
+  if (!dateStr) return "--";
   const d = new Date(dateStr);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  const h = String(d.getHours()).padStart(2, "0");
-  const min = String(d.getMinutes()).padStart(2, "0");
-  return `[${y}.${m}.${day} ${h}:${min}]`;
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
 export function TerminalLog({ entries, onClickEntry }: TerminalLogProps) {
@@ -30,10 +25,10 @@ export function TerminalLog({ entries, onClickEntry }: TerminalLogProps) {
     return (
       <div className="py-8 text-center">
         <span
-          className="text-xs tracking-wider"
-          style={{ color: "var(--retro-text-muted)" }}
+          className="text-sm"
+          style={{ color: "var(--theme-text-muted)" }}
         >
-          NO ENTRIES IN LOG
+          No entries yet
         </span>
       </div>
     );
@@ -47,34 +42,39 @@ export function TerminalLog({ entries, onClickEntry }: TerminalLogProps) {
         return (
           <div
             key={entry.id}
-            className="flex items-start gap-3 py-1.5 border-b transition-colors"
+            className="flex items-start gap-3 py-2 border-b transition-colors duration-150"
             style={{
-              borderColor: "var(--retro-border)",
+              borderColor: "var(--theme-border)",
               cursor: onClickEntry ? "pointer" : undefined,
             }}
             onClick={() => onClickEntry?.(entry.id)}
             onMouseEnter={(e) => {
-              if (onClickEntry) e.currentTarget.style.backgroundColor = "var(--retro-bg-card-hover)";
+              if (onClickEntry) e.currentTarget.style.backgroundColor = "var(--theme-bg-card-hover)";
             }}
             onMouseLeave={(e) => {
               if (onClickEntry) e.currentTarget.style.backgroundColor = "transparent";
             }}
           >
             <span
-              className="text-xs shrink-0"
-              style={{ color: "var(--retro-amber-dim)" }}
+              className="text-xs shrink-0 font-mono"
+              style={{ color: "var(--theme-text-muted)" }}
             >
               {formatTimestamp(entry.timestamp)}
             </span>
             <span
-              className="text-xs font-medium shrink-0 uppercase"
-              style={{ color: colors.text, minWidth: "3rem" }}
+              className="text-xs font-medium shrink-0 px-1.5 py-0.5 rounded"
+              style={{
+                backgroundColor: colors.bg,
+                color: colors.text,
+                minWidth: "3rem",
+                textAlign: "center",
+              }}
             >
               {shortType}
             </span>
             <span
               className="text-sm truncate"
-              style={{ color: "var(--retro-text)" }}
+              style={{ color: "var(--theme-text)" }}
             >
               {entry.text}
             </span>

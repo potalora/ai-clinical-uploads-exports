@@ -9,21 +9,21 @@ interface RetroButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement>
 
 const variantStyles: Record<string, React.CSSProperties> = {
   primary: {
-    backgroundColor: "var(--retro-amber)",
-    color: "var(--retro-bg-deep)",
+    backgroundColor: "var(--theme-amber)",
+    color: "#ffffff",
   },
   ghost: {
     backgroundColor: "transparent",
-    color: "var(--retro-amber)",
-    border: "1px solid var(--retro-border)",
+    color: "var(--theme-amber)",
+    border: "1px solid var(--theme-border)",
   },
   destructive: {
-    backgroundColor: "var(--retro-terracotta)",
-    color: "var(--retro-text)",
+    backgroundColor: "var(--theme-terracotta)",
+    color: "#ffffff",
   },
   large: {
-    backgroundColor: "var(--retro-amber)",
-    color: "var(--retro-bg-deep)",
+    backgroundColor: "var(--theme-amber)",
+    color: "#ffffff",
   },
 };
 
@@ -37,7 +37,7 @@ export function RetroButton({
   return (
     <button
       className={cn(
-        "inline-flex items-center justify-center font-semibold tracking-wider uppercase transition-all cursor-pointer",
+        "inline-flex items-center justify-center font-medium transition-all duration-200 cursor-pointer rounded-md",
         variant === "large"
           ? "px-8 py-3 text-sm"
           : "px-4 py-2 text-xs",
@@ -46,29 +46,25 @@ export function RetroButton({
       )}
       style={{
         ...variantStyles[variant],
-        fontFamily: "var(--font-display)",
-        borderRadius: "4px",
-        animation: variant === "large" && !disabled ? "pulse-glow 2s ease-in-out infinite" : undefined,
+        fontFamily: "var(--font-body)",
       }}
       disabled={disabled}
       onMouseEnter={(e) => {
         if (disabled) return;
         if (variant === "ghost") {
-          e.currentTarget.style.borderColor = "var(--retro-amber)";
-          e.currentTarget.classList.add("retro-hover-glow");
+          e.currentTarget.style.backgroundColor = "var(--theme-bg-card-hover)";
+          e.currentTarget.style.borderColor = "var(--theme-border-active)";
         } else {
-          e.currentTarget.style.filter = "brightness(1.15)";
-          e.currentTarget.style.textShadow = "0 0 4px rgba(0,0,0,0.3)";
+          e.currentTarget.style.filter = "brightness(1.1)";
         }
       }}
       onMouseLeave={(e) => {
         if (disabled) return;
         if (variant === "ghost") {
-          e.currentTarget.style.borderColor = "var(--retro-border)";
-          e.currentTarget.classList.remove("retro-hover-glow");
+          e.currentTarget.style.backgroundColor = "transparent";
+          e.currentTarget.style.borderColor = "var(--theme-border)";
         } else {
           e.currentTarget.style.filter = "none";
-          e.currentTarget.style.textShadow = "none";
         }
       }}
       {...props}

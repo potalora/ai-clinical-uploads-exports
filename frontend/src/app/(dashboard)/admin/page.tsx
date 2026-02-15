@@ -37,17 +37,16 @@ import {
 import { RecordDetailSheet } from "@/components/retro/RecordDetailSheet";
 
 const TABS = [
-  { key: "all", label: "ALL" },
-  { key: "labs", label: "LABS" },
-  { key: "meds", label: "MEDS" },
-  { key: "cond", label: "COND" },
-  { key: "enc", label: "ENC" },
-  { key: "immun", label: "IMMUN" },
-  { key: "img", label: "IMG" },
-  { key: "sep", label: "|", separator: true },
-  { key: "upload", label: "UPLOAD" },
-  { key: "dedup", label: "DEDUP" },
-  { key: "sys", label: "SYS" },
+  { key: "all", label: "All" },
+  { key: "labs", label: "Labs" },
+  { key: "meds", label: "Meds" },
+  { key: "cond", label: "Conditions" },
+  { key: "enc", label: "Encounters" },
+  { key: "immun", label: "Immunizations" },
+  { key: "img", label: "Imaging" },
+  { key: "upload", label: "Upload" },
+  { key: "dedup", label: "Dedup" },
+  { key: "sys", label: "System" },
 ];
 
 export default function AdminPage() {
@@ -63,16 +62,16 @@ export default function AdminPage() {
 
   return (
     <div className="space-y-6">
-      <GlowText as="h1">ADMIN CONSOLE</GlowText>
+      <GlowText as="h1">Admin Console</GlowText>
       <RetroTabs tabs={TABS} active={activeTab} onChange={handleTabChange} />
       <div className="mt-4">
         {activeTab === "all" && <AllRecordsTab />}
         {activeTab === "labs" && <LabsTab />}
-        {activeTab === "meds" && <RecordTypeTab recordType="medication" label="MEDICATIONS" />}
-        {activeTab === "cond" && <RecordTypeTab recordType="condition" label="CONDITIONS" />}
-        {activeTab === "enc" && <RecordTypeTab recordType="encounter" label="ENCOUNTERS" />}
-        {activeTab === "immun" && <RecordTypeTab recordType="immunization" label="IMMUNIZATIONS" />}
-        {activeTab === "img" && <RecordTypeTab recordType="imaging" label="IMAGING" />}
+        {activeTab === "meds" && <RecordTypeTab recordType="medication" label="Medications" />}
+        {activeTab === "cond" && <RecordTypeTab recordType="condition" label="Conditions" />}
+        {activeTab === "enc" && <RecordTypeTab recordType="encounter" label="Encounters" />}
+        {activeTab === "immun" && <RecordTypeTab recordType="immunization" label="Immunizations" />}
+        {activeTab === "img" && <RecordTypeTab recordType="imaging" label="Imaging" />}
         {activeTab === "upload" && <UploadTab />}
         {activeTab === "dedup" && <DedupTab />}
         {activeTab === "sys" && <SystemTab />}
@@ -125,15 +124,15 @@ function AllRecordsTab() {
             variant="ghost"
             onClick={() => { setSearch(searchInput); setPage(1); }}
           >
-            SEARCH
+            Search
           </RetroButton>
         </div>
         <select
           className="h-9 px-3 text-xs border"
           style={{
-            backgroundColor: "var(--retro-bg-card)",
-            color: "var(--retro-text)",
-            borderColor: "var(--retro-border)",
+            backgroundColor: "var(--theme-bg-card)",
+            color: "var(--theme-text)",
+            borderColor: "var(--theme-border)",
             borderRadius: "4px",
           }}
           value={recordType}
@@ -147,22 +146,22 @@ function AllRecordsTab() {
       </div>
 
       {loading ? (
-        <RetroLoadingState text="LOADING RECORDS" />
+        <RetroLoadingState text="Loading records" />
       ) : !data || data.items.length === 0 ? (
         <div className="py-12 text-center">
           <p
-            className="text-xs tracking-wider"
-            style={{ color: "var(--retro-text-muted)" }}
+            className="text-sm"
+            style={{ color: "var(--theme-text-muted)" }}
           >
-            NO RECORDS FOUND
+            No records found
           </p>
           {(search || recordType) && (
             <button
               onClick={() => { setSearch(""); setSearchInput(""); setRecordType(""); setPage(1); }}
-              className="mt-2 text-xs uppercase tracking-wider cursor-pointer"
-              style={{ color: "var(--retro-amber-dim)" }}
+              className="mt-2 text-xs cursor-pointer font-medium"
+              style={{ color: "var(--theme-amber-dim)" }}
             >
-              CLEAR FILTERS
+              Clear filters
             </button>
           )}
         </div>
@@ -170,10 +169,10 @@ function AllRecordsTab() {
         <>
           <RetroTable>
             <RetroTableHeader>
-              <RetroTableHead>TYPE</RetroTableHead>
-              <RetroTableHead>DESCRIPTION</RetroTableHead>
-              <RetroTableHead>DATE</RetroTableHead>
-              <RetroTableHead>SOURCE</RetroTableHead>
+              <RetroTableHead>Type</RetroTableHead>
+              <RetroTableHead>Description</RetroTableHead>
+              <RetroTableHead>Date</RetroTableHead>
+              <RetroTableHead>Source</RetroTableHead>
             </RetroTableHeader>
             <RetroTableBody>
               {data.items.map((record) => (
@@ -188,7 +187,7 @@ function AllRecordsTab() {
                     {record.display_text}
                   </RetroTableCell>
                   <RetroTableCell>
-                    <span style={{ color: "var(--retro-text-dim)" }}>
+                    <span style={{ color: "var(--theme-text-dim)" }}>
                       {record.effective_date
                         ? new Date(record.effective_date).toLocaleDateString()
                         : "--"}
@@ -197,7 +196,7 @@ function AllRecordsTab() {
                   <RetroTableCell>
                     <span
                       className="text-xs"
-                      style={{ color: "var(--retro-text-muted)" }}
+                      style={{ color: "var(--theme-text-muted)" }}
                     >
                       {record.source_format}
                     </span>
@@ -210,7 +209,7 @@ function AllRecordsTab() {
           <div className="flex items-center justify-between">
             <span
               className="text-xs"
-              style={{ color: "var(--retro-text-dim)" }}
+              style={{ color: "var(--theme-text-dim)" }}
             >
               {(data.page - 1) * data.page_size + 1}–
               {Math.min(data.page * data.page_size, data.total)} of {data.total}
@@ -221,14 +220,14 @@ function AllRecordsTab() {
                 disabled={page <= 1}
                 onClick={() => setPage((p) => p - 1)}
               >
-                PREV
+                Prev
               </RetroButton>
               <RetroButton
                 variant="ghost"
                 disabled={page >= totalPages}
                 onClick={() => setPage((p) => p + 1)}
               >
-                NEXT
+                Next
               </RetroButton>
             </div>
           </div>
@@ -250,10 +249,10 @@ function AllRecordsTab() {
 
 function interpretationStyle(interpretation: string): { color: string } {
   const code = interpretation?.toUpperCase();
-  if (code === "H" || code === "HH") return { color: "var(--retro-terracotta)" };
+  if (code === "H" || code === "HH") return { color: "var(--theme-terracotta)" };
   if (code === "L" || code === "LL") return { color: "var(--record-procedure-text)" };
-  if (code === "A" || code === "AA") return { color: "var(--retro-ochre)" };
-  return { color: "var(--retro-text-dim)" };
+  if (code === "A" || code === "AA") return { color: "var(--theme-ochre)" };
+  return { color: "var(--theme-text-dim)" };
 }
 
 function interpretationLabel(interpretation: string): string {
@@ -280,16 +279,16 @@ function LabsTab() {
       .finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <RetroLoadingState text="LOADING LAB RESULTS" />;
+  if (loading) return <RetroLoadingState text="Loading lab results" />;
 
   if (labs.length === 0) {
     return (
       <div className="py-12 text-center">
         <p
-          className="text-xs tracking-wider"
-          style={{ color: "var(--retro-text-muted)" }}
+          className="text-sm"
+          style={{ color: "var(--theme-text-muted)" }}
         >
-          NO LAB RESULTS FOUND
+          No lab results found
         </p>
       </div>
     );
@@ -298,11 +297,11 @@ function LabsTab() {
   return (
     <RetroTable>
       <RetroTableHeader>
-        <RetroTableHead>TEST</RetroTableHead>
-        <RetroTableHead>VALUE</RetroTableHead>
-        <RetroTableHead>REF RANGE</RetroTableHead>
-        <RetroTableHead>INTERP</RetroTableHead>
-        <RetroTableHead>DATE</RetroTableHead>
+        <RetroTableHead>Test</RetroTableHead>
+        <RetroTableHead>Value</RetroTableHead>
+        <RetroTableHead>Ref range</RetroTableHead>
+        <RetroTableHead>Interp</RetroTableHead>
+        <RetroTableHead>Date</RetroTableHead>
       </RetroTableHeader>
       <RetroTableBody>
         {labs.map((lab) => (
@@ -311,7 +310,7 @@ function LabsTab() {
               <div>
                 <p className="text-sm font-medium">{lab.display_text}</p>
                 {lab.code_display && lab.code_display !== lab.display_text && (
-                  <p className="text-xs" style={{ color: "var(--retro-text-muted)" }}>
+                  <p className="text-xs" style={{ color: "var(--theme-text-muted)" }}>
                     {lab.code_display}
                   </p>
                 )}
@@ -321,14 +320,14 @@ function LabsTab() {
               <span className="font-mono text-sm">
                 {lab.value !== null && lab.value !== undefined ? String(lab.value) : "--"}
                 {lab.unit && (
-                  <span className="ml-1" style={{ color: "var(--retro-text-muted)" }}>
+                  <span className="ml-1" style={{ color: "var(--theme-text-muted)" }}>
                     {lab.unit}
                   </span>
                 )}
               </span>
             </RetroTableCell>
             <RetroTableCell>
-              <span style={{ color: "var(--retro-text-dim)" }}>
+              <span style={{ color: "var(--theme-text-dim)" }}>
                 {lab.reference_low !== null && lab.reference_high !== null
                   ? `${lab.reference_low}–${lab.reference_high}`
                   : lab.reference_low !== null
@@ -340,14 +339,14 @@ function LabsTab() {
             </RetroTableCell>
             <RetroTableCell>
               <span
-                className="text-xs font-medium uppercase tracking-wider"
+                className="text-xs font-medium"
                 style={interpretationStyle(lab.interpretation)}
               >
                 {interpretationLabel(lab.interpretation)}
               </span>
             </RetroTableCell>
             <RetroTableCell>
-              <span style={{ color: "var(--retro-text-dim)" }}>
+              <span style={{ color: "var(--theme-text-dim)" }}>
                 {lab.effective_date
                   ? new Date(lab.effective_date).toLocaleDateString()
                   : "--"}
@@ -365,12 +364,12 @@ function LabsTab() {
    ========================================== */
 
 function statusColor(status: string | null): string {
-  if (!status) return "var(--retro-text-dim)";
+  if (!status) return "var(--theme-text-dim)";
   const s = status.toLowerCase();
-  if (s === "active" || s === "in-progress") return "var(--retro-ochre)";
-  if (s === "completed" || s === "resolved" || s === "finished") return "var(--retro-sage)";
-  if (s === "stopped" || s === "cancelled" || s === "not-done") return "var(--retro-terracotta)";
-  return "var(--retro-text-dim)";
+  if (s === "active" || s === "in-progress") return "var(--theme-ochre)";
+  if (s === "completed" || s === "resolved" || s === "finished") return "var(--theme-sage)";
+  if (s === "stopped" || s === "cancelled" || s === "not-done") return "var(--theme-terracotta)";
+  return "var(--theme-text-dim)";
 }
 
 function RecordTypeTab({ recordType, label }: { recordType: string; label: string }) {
@@ -386,16 +385,16 @@ function RecordTypeTab({ recordType, label }: { recordType: string; label: strin
       .finally(() => setLoading(false));
   }, [recordType]);
 
-  if (loading) return <RetroLoadingState text={`LOADING ${label}`} />;
+  if (loading) return <RetroLoadingState text={`Loading ${label.toLowerCase()}`} />;
 
   if (records.length === 0) {
     return (
       <div className="py-12 text-center">
         <p
-          className="text-xs tracking-wider"
-          style={{ color: "var(--retro-text-muted)" }}
+          className="text-sm"
+          style={{ color: "var(--theme-text-muted)" }}
         >
-          NO {label} FOUND
+          No {label.toLowerCase()} found
         </p>
       </div>
     );
@@ -405,9 +404,9 @@ function RecordTypeTab({ recordType, label }: { recordType: string; label: strin
     <>
       <RetroTable>
         <RetroTableHeader>
-          <RetroTableHead>NAME</RetroTableHead>
-          <RetroTableHead>STATUS</RetroTableHead>
-          <RetroTableHead>DATE</RetroTableHead>
+          <RetroTableHead>Name</RetroTableHead>
+          <RetroTableHead>Status</RetroTableHead>
+          <RetroTableHead>Date</RetroTableHead>
         </RetroTableHeader>
         <RetroTableBody>
           {records.map((record) => (
@@ -421,17 +420,17 @@ function RecordTypeTab({ recordType, label }: { recordType: string; label: strin
               <RetroTableCell>
                 {record.status ? (
                   <span
-                    className="text-xs font-medium uppercase tracking-wider"
+                    className="text-xs font-medium"
                     style={{ color: statusColor(record.status) }}
                   >
                     {record.status}
                   </span>
                 ) : (
-                  <span style={{ color: "var(--retro-text-muted)" }}>--</span>
+                  <span style={{ color: "var(--theme-text-muted)" }}>--</span>
                 )}
               </RetroTableCell>
               <RetroTableCell>
-                <span style={{ color: "var(--retro-text-dim)" }}>
+                <span style={{ color: "var(--theme-text-dim)" }}>
                   {record.effective_date
                     ? new Date(record.effective_date).toLocaleDateString()
                     : "--"}
@@ -506,28 +505,28 @@ function UploadTab() {
         {...getRootProps()}
         className="border-2 border-dashed p-12 text-center cursor-pointer transition-colors"
         style={{
-          borderColor: isDragActive ? "var(--retro-amber)" : "var(--retro-border)",
-          backgroundColor: isDragActive ? "var(--retro-bg-card-hover)" : "var(--retro-bg-card)",
+          borderColor: isDragActive ? "var(--theme-amber)" : "var(--theme-border)",
+          backgroundColor: isDragActive ? "var(--theme-bg-card-hover)" : "var(--theme-bg-card)",
           borderRadius: "4px",
         }}
       >
         <input {...getInputProps()} />
         {isDragActive ? (
           <p
-            className="text-sm tracking-wider"
-            style={{ color: "var(--retro-amber)", fontFamily: "var(--font-display)" }}
+            className="text-sm font-medium"
+            style={{ color: "var(--theme-amber)" }}
           >
-            DROP FILES TO INITIATE DATA TRANSFER
+            Drop files here to upload
           </p>
         ) : (
           <div className="space-y-2">
             <p
-              className="text-sm tracking-wider"
-              style={{ color: "var(--retro-text-dim)", fontFamily: "var(--font-display)" }}
+              className="text-sm"
+              style={{ color: "var(--theme-text-dim)" }}
             >
-              DROP FILES TO INITIATE DATA TRANSFER
+              Drop files here to upload
             </p>
-            <p className="text-xs" style={{ color: "var(--retro-text-muted)" }}>
+            <p className="text-xs" style={{ color: "var(--theme-text-muted)" }}>
               JSON or ZIP files up to 500MB
             </p>
           </div>
@@ -540,19 +539,19 @@ function UploadTab() {
           <RetroCardContent>
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium" style={{ color: "var(--retro-text)" }}>
+                <p className="text-sm font-medium" style={{ color: "var(--theme-text)" }}>
                   {selectedFile.name}
                 </p>
-                <p className="text-xs" style={{ color: "var(--retro-text-muted)" }}>
+                <p className="text-xs" style={{ color: "var(--theme-text-muted)" }}>
                   {(selectedFile.size / 1024).toFixed(1)} KB
                 </p>
               </div>
               <div className="flex gap-2">
                 <RetroButton variant="ghost" onClick={() => setSelectedFile(null)}>
-                  REMOVE
+                  Remove
                 </RetroButton>
                 <RetroButton onClick={handleUpload} disabled={uploading}>
-                  {uploading ? "UPLOADING..." : "UPLOAD"}
+                  {uploading ? "Uploading..." : "Upload"}
                 </RetroButton>
               </div>
             </div>
@@ -568,14 +567,14 @@ function UploadTab() {
               <span
                 className="text-xs font-bold shrink-0 px-2 py-0.5"
                 style={{
-                  backgroundColor: "var(--retro-terracotta)",
-                  color: "var(--retro-text)",
+                  backgroundColor: "var(--theme-terracotta)",
+                  color: "var(--theme-text)",
                   borderRadius: "4px",
                 }}
               >
                 ERROR
               </span>
-              <p className="text-xs" style={{ color: "var(--retro-text-dim)" }}>{error}</p>
+              <p className="text-xs" style={{ color: "var(--theme-text-dim)" }}>{error}</p>
             </div>
           </RetroCardContent>
         </RetroCard>
@@ -585,28 +584,28 @@ function UploadTab() {
       {result && (
         <RetroCard accentTop>
           <RetroCardHeader>
-            <GlowText as="h4" glow={false}>UPLOAD COMPLETE</GlowText>
+            <GlowText as="h4" glow={false}>Upload complete</GlowText>
           </RetroCardHeader>
           <RetroCardContent>
             <div className="space-y-2">
               <div className="flex justify-between py-1">
-                <span className="text-xs" style={{ color: "var(--retro-text-dim)" }}>STATUS</span>
-                <span className="text-xs font-medium" style={{ color: "var(--retro-sage)" }}>
+                <span className="text-xs" style={{ color: "var(--theme-text-dim)" }}>Status</span>
+                <span className="text-xs font-medium" style={{ color: "var(--theme-sage)" }}>
                   {result.status}
                 </span>
               </div>
               <div className="flex justify-between py-1">
-                <span className="text-xs" style={{ color: "var(--retro-text-dim)" }}>
-                  RECORDS INSERTED
+                <span className="text-xs" style={{ color: "var(--theme-text-dim)" }}>
+                  Records inserted
                 </span>
-                <span className="text-xs font-medium" style={{ color: "var(--retro-text)" }}>
+                <span className="text-xs font-medium" style={{ color: "var(--theme-text)" }}>
                   {result.records_inserted}
                 </span>
               </div>
               {Array.isArray(result.errors) && result.errors.length > 0 && (
                 <div className="pt-2">
-                  <p className="text-xs font-medium mb-2" style={{ color: "var(--retro-terracotta)" }}>
-                    ERRORS ({result.errors.length})
+                  <p className="text-xs font-medium mb-2" style={{ color: "var(--theme-terracotta)" }}>
+                    Errors ({result.errors.length})
                   </p>
                   <div className="max-h-48 overflow-auto space-y-1">
                     {result.errors.map((err, i) => (
@@ -614,8 +613,8 @@ function UploadTab() {
                         key={i}
                         className="text-xs font-mono p-2"
                         style={{
-                          backgroundColor: "var(--retro-bg-deep)",
-                          color: "var(--retro-text-dim)",
+                          backgroundColor: "var(--theme-bg-deep)",
+                          color: "var(--theme-text-dim)",
                           borderRadius: "4px",
                         }}
                       >
@@ -772,27 +771,27 @@ function UnstructuredUploadSection() {
   };
 
   const ENTITY_COLORS: Record<string, string> = {
-    medication: "var(--retro-amber)",
-    condition: "var(--retro-ochre)",
-    lab_result: "var(--retro-sage)",
-    vital: "var(--retro-sage)",
+    medication: "var(--theme-amber)",
+    condition: "var(--theme-ochre)",
+    lab_result: "var(--theme-sage)",
+    vital: "var(--theme-sage)",
     procedure: "var(--record-procedure-text)",
-    allergy: "var(--retro-terracotta)",
-    provider: "var(--retro-text-dim)",
-    dosage: "var(--retro-text-muted)",
-    route: "var(--retro-text-muted)",
-    frequency: "var(--retro-text-muted)",
-    duration: "var(--retro-text-muted)",
+    allergy: "var(--theme-terracotta)",
+    provider: "var(--theme-text-dim)",
+    dosage: "var(--theme-text-muted)",
+    route: "var(--theme-text-muted)",
+    frequency: "var(--theme-text-muted)",
+    duration: "var(--theme-text-muted)",
   };
 
   return (
     <div className="space-y-4 mt-8">
       <div className="flex items-center gap-2">
-        <div className="flex-1 h-px" style={{ backgroundColor: "var(--retro-border)" }} />
-        <span className="text-xs tracking-widest" style={{ color: "var(--retro-amber-dim)", fontFamily: "var(--font-display)" }}>
-          UNSTRUCTURED DATA UPLOAD
+        <div className="flex-1 h-px" style={{ backgroundColor: "var(--theme-border)" }} />
+        <span className="text-xs font-medium" style={{ color: "var(--theme-text-dim)" }}>
+          Unstructured document upload
         </span>
-        <div className="flex-1 h-px" style={{ backgroundColor: "var(--retro-border)" }} />
+        <div className="flex-1 h-px" style={{ backgroundColor: "var(--theme-border)" }} />
       </div>
 
       {/* Dropzone for unstructured files */}
@@ -800,17 +799,17 @@ function UnstructuredUploadSection() {
         {...getUnstrRootProps()}
         className="border-2 border-dashed p-8 text-center cursor-pointer transition-colors"
         style={{
-          borderColor: isUnstrDragActive ? "var(--retro-amber)" : "var(--retro-border)",
-          backgroundColor: isUnstrDragActive ? "var(--retro-bg-card-hover)" : "var(--retro-bg-card)",
+          borderColor: isUnstrDragActive ? "var(--theme-amber)" : "var(--theme-border)",
+          backgroundColor: isUnstrDragActive ? "var(--theme-bg-card-hover)" : "var(--theme-bg-card)",
           borderRadius: "4px",
         }}
       >
         <input {...getUnstrInputProps()} />
         <div className="space-y-2">
-          <p className="text-sm tracking-wider" style={{ color: "var(--retro-text-dim)", fontFamily: "var(--font-display)" }}>
-            DROP PDF, RTF, OR TIFF FOR AI EXTRACTION
+          <p className="text-sm" style={{ color: "var(--theme-text-dim)" }}>
+            Drop PDF, RTF, or TIFF for AI extraction
           </p>
-          <p className="text-xs" style={{ color: "var(--retro-text-muted)" }}>
+          <p className="text-xs" style={{ color: "var(--theme-text-muted)" }}>
             Clinical notes, scanned documents, reports
           </p>
         </div>
@@ -822,13 +821,13 @@ function UnstructuredUploadSection() {
           <RetroCardContent>
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium" style={{ color: "var(--retro-text)" }}>{unstrFile.name}</p>
-                <p className="text-xs" style={{ color: "var(--retro-text-muted)" }}>{(unstrFile.size / 1024).toFixed(1)} KB</p>
+                <p className="text-sm font-medium" style={{ color: "var(--theme-text)" }}>{unstrFile.name}</p>
+                <p className="text-xs" style={{ color: "var(--theme-text-muted)" }}>{(unstrFile.size / 1024).toFixed(1)} KB</p>
               </div>
               <div className="flex gap-2">
-                <RetroButton variant="ghost" onClick={() => setUnstrFile(null)}>REMOVE</RetroButton>
+                <RetroButton variant="ghost" onClick={() => setUnstrFile(null)}>Remove</RetroButton>
                 <RetroButton onClick={handleUnstrUpload} disabled={uploading}>
-                  {uploading ? "UPLOADING..." : "EXTRACT"}
+                  {uploading ? "Uploading..." : "Extract"}
                 </RetroButton>
               </div>
             </div>
@@ -841,10 +840,9 @@ function UnstructuredUploadSection() {
         <RetroCard>
           <RetroCardContent>
             <div className="flex items-center gap-3">
-              <span className="text-xs tracking-wider animate-pulse" style={{ color: "var(--retro-amber)", fontFamily: "var(--font-display)" }}>
-                EXTRACTING TEXT AND ENTITIES
+              <span className="text-sm animate-pulse" style={{ color: "var(--theme-amber)" }}>
+                Extracting text and entities
               </span>
-              <span className="blink-cursor text-sm" />
             </div>
           </RetroCardContent>
         </RetroCard>
@@ -855,10 +853,10 @@ function UnstructuredUploadSection() {
         <RetroCard>
           <RetroCardContent>
             <div className="flex items-start gap-3">
-              <span className="text-xs font-bold shrink-0 px-2 py-0.5" style={{ backgroundColor: "var(--retro-terracotta)", color: "var(--retro-text)", borderRadius: "4px" }}>
+              <span className="text-xs font-bold shrink-0 px-2 py-0.5" style={{ backgroundColor: "var(--theme-terracotta)", color: "var(--theme-text)", borderRadius: "4px" }}>
                 ERROR
               </span>
-              <p className="text-xs" style={{ color: "var(--retro-text-dim)" }}>{error}</p>
+              <p className="text-xs" style={{ color: "var(--theme-text-dim)" }}>{error}</p>
             </div>
           </RetroCardContent>
         </RetroCard>
@@ -868,10 +866,10 @@ function UnstructuredUploadSection() {
       {confirmResult && (
         <RetroCard accentTop>
           <RetroCardHeader>
-            <GlowText as="h4" glow={false}>EXTRACTION CONFIRMED</GlowText>
+            <GlowText as="h4" glow={false}>Extraction confirmed</GlowText>
           </RetroCardHeader>
           <RetroCardContent>
-            <p className="text-sm" style={{ color: "var(--retro-sage)" }}>
+            <p className="text-sm" style={{ color: "var(--theme-sage)" }}>
               {confirmResult.records_created} health records created. View in ALL tab.
             </p>
           </RetroCardContent>
@@ -883,8 +881,8 @@ function UnstructuredUploadSection() {
         <RetroCard accentTop>
           <RetroCardHeader>
             <div className="flex items-center justify-between">
-              <GlowText as="h4" glow={false}>REVIEW EXTRACTED ENTITIES</GlowText>
-              <span className="text-xs" style={{ color: "var(--retro-text-dim)" }}>
+              <GlowText as="h4" glow={false}>Review extracted entities</GlowText>
+              <span className="text-xs" style={{ color: "var(--theme-text-dim)" }}>
                 {extraction.entities.length} entities found
               </span>
             </div>
@@ -893,17 +891,17 @@ function UnstructuredUploadSection() {
             <div className="space-y-4">
               {/* Patient selector */}
               <div>
-                <label className="text-xs tracking-wider block mb-2" style={{ color: "var(--retro-text-dim)", fontFamily: "var(--font-display)" }}>
-                  ASSIGN TO PATIENT
+                <label className="text-xs font-medium block mb-2" style={{ color: "var(--theme-text-dim)", fontFamily: "var(--font-body)" }}>
+                  Assign to patient
                 </label>
                 <select
                   value={selectedPatient}
                   onChange={(e) => setSelectedPatient(e.target.value)}
                   className="w-full px-3 py-2 text-sm border"
                   style={{
-                    backgroundColor: "var(--retro-bg-deep)",
-                    borderColor: "var(--retro-border)",
-                    color: "var(--retro-text)",
+                    backgroundColor: "var(--theme-bg-deep)",
+                    borderColor: "var(--theme-border)",
+                    color: "var(--theme-text)",
                     fontFamily: "var(--font-mono)",
                     borderRadius: "4px",
                   }}
@@ -938,15 +936,15 @@ function UnstructuredUploadSection() {
                           />
                         </RetroTableCell>
                         <RetroTableCell>
-                          <span className="text-xs font-bold uppercase" style={{ color: ENTITY_COLORS[entity.entity_class] || "var(--retro-text-dim)" }}>
+                          <span className="text-xs font-semibold" style={{ color: ENTITY_COLORS[entity.entity_class] || "var(--theme-text-dim)" }}>
                             {entity.entity_class.replace("_", " ")}
                           </span>
                         </RetroTableCell>
                         <RetroTableCell>
-                          <span className="text-xs" style={{ color: "var(--retro-text)" }}>{entity.text}</span>
+                          <span className="text-xs" style={{ color: "var(--theme-text)" }}>{entity.text}</span>
                         </RetroTableCell>
                         <RetroTableCell>
-                          <span className="text-xs" style={{ color: "var(--retro-text-muted)" }}>
+                          <span className="text-xs" style={{ color: "var(--theme-text-muted)" }}>
                             {Object.entries(entity.attributes)
                               .filter(([k]) => k !== "medication_group")
                               .map(([k, v]) => `${k}: ${v}`)
@@ -955,7 +953,7 @@ function UnstructuredUploadSection() {
                           </span>
                         </RetroTableCell>
                         <RetroTableCell>
-                          <span className="text-xs" style={{ color: entity.confidence >= 0.8 ? "var(--retro-sage)" : "var(--retro-ochre)" }}>
+                          <span className="text-xs" style={{ color: entity.confidence >= 0.8 ? "var(--theme-sage)" : "var(--theme-ochre)" }}>
                             {(entity.confidence * 100).toFixed(0)}%
                           </span>
                         </RetroTableCell>
@@ -968,7 +966,7 @@ function UnstructuredUploadSection() {
               {/* Confirm button */}
               <div className="flex justify-end">
                 <RetroButton onClick={handleConfirm} disabled={confirming || selectedEntities.size === 0}>
-                  {confirming ? "SAVING..." : `CONFIRM & SAVE ${selectedEntities.size} ENTITIES`}
+                  {confirming ? "Saving..." : `Confirm ${selectedEntities.size} entities`}
                 </RetroButton>
               </div>
             </div>
@@ -1052,10 +1050,10 @@ function DedupTab() {
     <div className="space-y-4">
       <div className="flex items-center gap-4">
         <RetroButton onClick={handleScan} disabled={scanning}>
-          {scanning ? "SCANNING..." : "SCAN FOR DUPLICATES"}
+          {scanning ? "Scanning..." : "Scan for duplicates"}
         </RetroButton>
         {scanResult && (
-          <span className="text-xs" style={{ color: "var(--retro-text-dim)" }}>
+          <span className="text-xs" style={{ color: "var(--theme-text-dim)" }}>
             {scanResult}
           </span>
         )}
@@ -1068,32 +1066,32 @@ function DedupTab() {
               <span
                 className="text-xs font-bold shrink-0 px-2 py-0.5"
                 style={{
-                  backgroundColor: "var(--retro-terracotta)",
-                  color: "var(--retro-text)",
+                  backgroundColor: "var(--theme-terracotta)",
+                  color: "var(--theme-text)",
                   borderRadius: "4px",
                 }}
               >
                 ERROR
               </span>
-              <p className="text-xs" style={{ color: "var(--retro-text-dim)" }}>{error}</p>
+              <p className="text-xs" style={{ color: "var(--theme-text-dim)" }}>{error}</p>
             </div>
           </RetroCardContent>
         </RetroCard>
       )}
 
       {loading ? (
-        <RetroLoadingState text="LOADING CANDIDATES" />
+        <RetroLoadingState text="Loading candidates" />
       ) : candidates.length === 0 && total === 0 ? (
         <div className="py-12 text-center">
           <p
-            className="text-xs tracking-wider"
-            style={{ color: "var(--retro-text-muted)" }}
+            className="text-sm"
+            style={{ color: "var(--theme-text-muted)" }}
           >
-            NO DUPLICATE CANDIDATES FOUND
+            No duplicate candidates
           </p>
           <p
             className="text-xs mt-1"
-            style={{ color: "var(--retro-text-muted)" }}
+            style={{ color: "var(--theme-text-muted)" }}
           >
             Run the scanner to check for potential duplicates.
           </p>
@@ -1101,12 +1099,12 @@ function DedupTab() {
       ) : (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <span className="text-xs" style={{ color: "var(--retro-text-dim)" }}>
-              {total.toLocaleString()} PENDING CANDIDATES — SHOWING {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, total)}
+            <span className="text-xs" style={{ color: "var(--theme-text-dim)" }}>
+              {total.toLocaleString()} pending candidates — showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, total)}
             </span>
             <div className="flex gap-2">
-              <RetroButton variant="ghost" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>PREV</RetroButton>
-              <RetroButton variant="ghost" disabled={page * pageSize >= total} onClick={() => setPage(p => p + 1)}>NEXT</RetroButton>
+              <RetroButton variant="ghost" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>Prev</RetroButton>
+              <RetroButton variant="ghost" disabled={page * pageSize >= total} onClick={() => setPage(p => p + 1)}>Next</RetroButton>
             </div>
           </div>
           {candidates.map((candidate) => (
@@ -1117,9 +1115,9 @@ function DedupTab() {
                     <div className="flex items-center gap-3">
                       <span
                         className="text-sm font-medium"
-                        style={{ color: "var(--retro-amber)" }}
+                        style={{ color: "var(--theme-amber)" }}
                       >
-                        {Math.round(candidate.similarity_score * 100)}% MATCH
+                        {Math.round(candidate.similarity_score * 100)}% match
                       </span>
                       <div className="flex gap-1">
                         {Object.entries(candidate.match_reasons)
@@ -1127,12 +1125,12 @@ function DedupTab() {
                           .map(([reason]) => (
                             <span
                               key={reason}
-                              className="px-2 py-0.5 text-xs uppercase tracking-wider"
+                              className="px-2 py-0.5 text-xs rounded"
                               style={{
-                                backgroundColor: "var(--retro-bg-surface)",
-                                color: "var(--retro-text-dim)",
+                                backgroundColor: "var(--theme-bg-surface)",
+                                color: "var(--theme-text-dim)",
                                 borderRadius: "4px",
-                                border: "1px solid var(--retro-border)",
+                                border: "1px solid var(--theme-border)",
                               }}
                             >
                               {reason}
@@ -1145,14 +1143,14 @@ function DedupTab() {
                         onClick={() => handleMerge(candidate.id)}
                         disabled={actionLoading === candidate.id}
                       >
-                        {actionLoading === candidate.id ? "..." : "MERGE"}
+                        {actionLoading === candidate.id ? "..." : "Merge"}
                       </RetroButton>
                       <RetroButton
                         variant="ghost"
                         onClick={() => handleDismiss(candidate.id)}
                         disabled={actionLoading === candidate.id}
                       >
-                        DISMISS
+                        Dismiss
                       </RetroButton>
                     </div>
                   </div>
@@ -1186,21 +1184,21 @@ function DedupRecordCard({
     <div
       className="border p-3 space-y-2"
       style={{
-        backgroundColor: "var(--retro-bg-surface)",
-        borderColor: "var(--retro-border)",
+        backgroundColor: "var(--theme-bg-surface)",
+        borderColor: "var(--theme-border)",
         borderRadius: "4px",
       }}
     >
       <div className="flex items-center gap-2">
-        <span className="text-xs" style={{ color: "var(--retro-text-muted)" }}>
+        <span className="text-xs" style={{ color: "var(--theme-text-muted)" }}>
           {label}
         </span>
         <RetroBadge recordType={record.record_type} short />
       </div>
-      <p className="text-sm" style={{ color: "var(--retro-text)" }}>
+      <p className="text-sm" style={{ color: "var(--theme-text)" }}>
         {record.display_text}
       </p>
-      <div className="flex items-center gap-3 text-xs" style={{ color: "var(--retro-text-muted)" }}>
+      <div className="flex items-center gap-3 text-xs" style={{ color: "var(--theme-text-muted)" }}>
         <span>{record.source_format}</span>
         <span>
           {record.effective_date
@@ -1234,7 +1232,7 @@ function SystemTab() {
       .finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <RetroLoadingState text="LOADING SYSTEM INFO" />;
+  if (loading) return <RetroLoadingState text="Loading system info" />;
 
   const dateRange =
     overview?.date_range_start && overview?.date_range_end
@@ -1246,22 +1244,22 @@ function SystemTab() {
       {/* Account Info */}
       <RetroCard accentTop>
         <RetroCardHeader>
-          <GlowText as="h4" glow={false}>ACCOUNT INFORMATION</GlowText>
+          <GlowText as="h4" glow={false}>Account information</GlowText>
         </RetroCardHeader>
         <RetroCardContent>
           {user ? (
             <div className="space-y-2">
-              <SysRow label="EMAIL" value={user.email} />
-              <SysRow label="DISPLAY NAME" value={user.display_name || "Not set"} />
+              <SysRow label="Email" value={user.email} />
+              <SysRow label="Display name" value={user.display_name || "Not set"} />
               <SysRow
-                label="STATUS"
-                value={user.is_active ? "ACTIVE" : "INACTIVE"}
-                valueColor={user.is_active ? "var(--retro-sage)" : "var(--retro-terracotta)"}
+                label="Status"
+                value={user.is_active ? "Active" : "Inactive"}
+                valueColor={user.is_active ? "var(--theme-sage)" : "var(--theme-terracotta)"}
               />
-              <SysRow label="USER ID" value={user.id} mono />
+              <SysRow label="User ID" value={user.id} mono />
             </div>
           ) : (
-            <p className="text-xs" style={{ color: "var(--retro-text-muted)" }}>
+            <p className="text-xs" style={{ color: "var(--theme-text-muted)" }}>
               Unable to load account information.
             </p>
           )}
@@ -1271,18 +1269,18 @@ function SystemTab() {
       {/* Data Stats */}
       <RetroCard>
         <RetroCardHeader>
-          <GlowText as="h4" glow={false}>DATA STATISTICS</GlowText>
+          <GlowText as="h4" glow={false}>Data statistics</GlowText>
         </RetroCardHeader>
         <RetroCardContent>
           {overview ? (
             <div className="space-y-2">
-              <SysRow label="TOTAL RECORDS" value={String(overview.total_records)} />
-              <SysRow label="TOTAL PATIENTS" value={String(overview.total_patients)} />
-              <SysRow label="TOTAL UPLOADS" value={String(overview.total_uploads)} />
-              <SysRow label="DATE RANGE" value={dateRange} />
+              <SysRow label="Total records" value={String(overview.total_records)} />
+              <SysRow label="Total patients" value={String(overview.total_patients)} />
+              <SysRow label="Total uploads" value={String(overview.total_uploads)} />
+              <SysRow label="Date range" value={dateRange} />
             </div>
           ) : (
-            <p className="text-xs" style={{ color: "var(--retro-text-muted)" }}>
+            <p className="text-xs" style={{ color: "var(--theme-text-muted)" }}>
               No data available.
             </p>
           )}
@@ -1297,7 +1295,7 @@ function SystemTab() {
           window.location.href = "/login";
         }}
       >
-        SIGN OUT
+        Sign out
       </RetroButton>
 
       {/* Privacy Notice */}
@@ -1307,8 +1305,8 @@ function SystemTab() {
             <span
               className="text-xs font-bold shrink-0 px-2 py-0.5"
               style={{
-                backgroundColor: "var(--retro-sienna)",
-                color: "var(--retro-text)",
+                backgroundColor: "var(--theme-sienna)",
+                color: "var(--theme-text)",
                 borderRadius: "4px",
               }}
             >
@@ -1316,7 +1314,7 @@ function SystemTab() {
             </span>
             <p
               className="text-xs leading-relaxed"
-              style={{ color: "var(--retro-text-dim)" }}
+              style={{ color: "var(--theme-text-dim)" }}
             >
               All health data is stored locally and encrypted at rest. No data is
               transmitted to external services. AI summary prompts are constructed
@@ -1343,17 +1341,17 @@ function SysRow({
   return (
     <div
       className="flex items-baseline justify-between py-1.5 border-b"
-      style={{ borderColor: "var(--retro-border)" }}
+      style={{ borderColor: "var(--theme-border)" }}
     >
       <span
-        className="text-xs uppercase tracking-wider"
-        style={{ color: "var(--retro-text-muted)" }}
+        className="text-xs font-medium"
+        style={{ color: "var(--theme-text-muted)" }}
       >
         {label}
       </span>
       <span
         className={`text-xs ${mono ? "font-mono" : "font-medium"}`}
-        style={{ color: valueColor || "var(--retro-text)" }}
+        style={{ color: valueColor || "var(--theme-text)" }}
       >
         {value}
       </span>
