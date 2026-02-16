@@ -1,6 +1,6 @@
-# Backend Engineering Handoff: AI Web Records API Contract
+# Backend Engineering Handoff: AI-Enabled Clinical Uploads/Exports API Contract
 
-This document defines the complete API contract between the AI Web Records frontend and backend. All endpoints are prefixed with `/api/v1`. The frontend expects JSON responses with the schemas defined below.
+This document defines the complete API contract between the AI-Enabled Clinical Uploads/Exports frontend and backend. All endpoints are prefixed with `/api/v1`. The frontend expects JSON responses with the schemas defined below.
 
 ---
 
@@ -55,6 +55,28 @@ Authenticate and receive JWT tokens.
 ```
 
 **Errors:** `401` (invalid credentials)
+
+### POST `/auth/refresh`
+
+Refresh the access token using a refresh token. The old refresh token is revoked and a new token pair is issued.
+
+**Request:**
+```json
+{
+  "refresh_token": "jwt-string"
+}
+```
+
+**Response (200):**
+```json
+{
+  "access_token": "jwt-string",
+  "refresh_token": "jwt-string",
+  "token_type": "bearer"
+}
+```
+
+**Errors:** `401` (invalid or expired refresh token)
 
 ### POST `/auth/logout`
 
@@ -126,6 +148,12 @@ Primary data source for the Home pane. Returns aggregate statistics and recent r
 
 Lab-specific dashboard data. Used by the Admin > LABS tab.
 
+**Query Parameters:**
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `page` | int | 1 | Page number (1-indexed) |
+| `page_size` | int | 20 | Items per page (max 100) |
+
 **Response (200):**
 ```json
 {
@@ -142,7 +170,10 @@ Lab-specific dashboard data. Used by the Admin > LABS tab.
       "code_display": "Glucose",
       "code_value": "2345-7"
     }
-  ]
+  ],
+  "total": 128,
+  "page": 1,
+  "page_size": 20
 }
 ```
 
@@ -152,6 +183,24 @@ Lab-specific dashboard data. Used by the Admin > LABS tab.
 - Extract from `health_records` where `record_type = 'observation'` and the FHIR resource contains lab-relevant category codes
 - `value` can be numeric or string; `unit` is the UCUM unit from the FHIR Observation
 - `reference_low`/`reference_high` come from `referenceRange` in the FHIR resource
+
+### GET `/dashboard/patients`
+
+List patients belonging to the current user.
+
+**Response (200):**
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "fhir_id": "Patient/12345",
+      "gender": "female"
+    }
+  ],
+  "total": 1
+}
+```
 
 ---
 
@@ -310,23 +359,188 @@ Poll for ingestion progress on large imports. Frontend polls every 2 seconds.
 - Stops polling when `completed`, `failed`, or `partial`
 - Shows partial results (records already committed) even during processing
 
----
+### GET `/upload/:id/errors`
 
-## AI Summary Prompts
+Get row-level ingestion errors for a specific upload.
 
-**Critical: NO external API calls.** These endpoints construct prompts and return them. The application never calls any AI service.
+**Response (200):**
+```json
+{
+  "errors": [
+    {
+      "file": "ORDER_PROC.tsv",
+      "row": 445,
+      "error": "invalid date format"
+    }
+  ]
+}
+```
 
-### POST `/summary/build-prompt`
+### GET `/upload/history`
 
-Build a de-identified prompt from health records.
+List upload history with record counts.
+
+**Response (200):**
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "filename": "records.json",
+      "ingestion_status": "completed",
+      "record_count": 142,
+      "file_size_bytes": 524288,
+      "created_at": "2024-02-01T10:30:00Z"
+    }
+  ],
+  "total": 3
+}
+```
+
+### POST `/upload/unstructured`
+
+Upload a PDF, RTF, or TIFF for AI-powered text extraction and entity extraction. Processing happens in the background.
+
+**Request:** `multipart/form-data` with field `file` (PDF, RTF, TIF, or TIFF)
+
+**Response (202):**
+```json
+{
+  "upload_id": "uuid",
+  "status": "processing",
+  "file_type": "pdf"
+}
+```
+
+**Notes:**
+- Allowed extensions: `.pdf`, `.rtf`, `.tif`, `.tiff`
+- Magic byte validation ensures content matches claimed file type
+- Processing pipeline: text extraction (Gemini for PDF/TIFF, `striprtf` for RTF) → PHI scrubbing → entity extraction (LangExtract via Gemini)
+- Final status is `awaiting_confirmation` when entities are ready for user review
+- File size limit: 500MB
+
+### POST `/upload/unstructured-batch`
+
+Upload multiple unstructured files for concurrent processing.
+
+**Request:** `multipart/form-data` with field `files` (multiple PDF/RTF/TIFF files)
+
+**Response (202):**
+```json
+{
+  "uploads": [
+    {
+      "upload_id": "uuid",
+      "status": "processing",
+      "file_type": "pdf"
+    }
+  ],
+  "total": 3
+}
+```
+
+**Notes:**
+- Files with unsupported extensions, invalid magic bytes, or that exceed size limits are silently skipped
+- Each file is processed independently in the background
+
+### GET `/upload/:id/extraction`
+
+Get extracted text and entities for an unstructured upload.
+
+**Response (200):**
+```json
+{
+  "upload_id": "uuid",
+  "status": "awaiting_confirmation",
+  "extracted_text_preview": "First 500 characters of extracted text...",
+  "entities": [
+    {
+      "entity_class": "medication",
+      "text": "Lisinopril 10mg",
+      "attributes": { "dosage": "10mg", "frequency": "daily" },
+      "start_pos": 120,
+      "end_pos": 135,
+      "confidence": 0.92
+    }
+  ],
+  "error": null
+}
+```
+
+**Entity classes:** `medication`, `condition`, `procedure`, `lab_result`, `vital_sign`, `allergy`, `provider`
+
+**Notes:**
+- `extracted_text_preview` is the first 500 characters of the extracted text
+- `entities` may be empty if extraction is still processing or if no entities were found
+- `error` contains a user-safe error message if extraction failed
+
+### POST `/upload/:id/confirm-extraction`
+
+Confirm extracted entities and create FHIR health records.
 
 **Request:**
 ```json
 {
   "patient_id": "uuid",
-  "summary_type": "full"
+  "confirmed_entities": [
+    {
+      "entity_class": "medication",
+      "text": "Lisinopril 10mg",
+      "attributes": { "dosage": "10mg" },
+      "start_pos": 120,
+      "end_pos": 135,
+      "confidence": 0.92
+    }
+  ]
 }
 ```
+
+**Response (200):**
+```json
+{
+  "upload_id": "uuid",
+  "records_created": 5,
+  "status": "completed"
+}
+```
+
+**Notes:**
+- The user reviews extracted entities in the UI and submits only the confirmed ones
+- Each confirmed entity is mapped to a FHIR resource and stored as a `HealthRecord` with `ai_extracted=true`
+- The upload status transitions from `awaiting_confirmation` to `completed`
+
+---
+
+## AI Summary
+
+**Dual-mode operation:** Mode 1 (`build-prompt`) constructs de-identified prompts for the user to execute externally — no API key needed. Mode 2 (`generate`) calls the Gemini API directly — requires `GEMINI_API_KEY`. All health data is de-identified via the PHI scrubber before any AI operation in both modes.
+
+### POST `/summary/build-prompt`
+
+Build a de-identified prompt from health records. Returns the prompt for external use — does not call any AI service.
+
+**Request:**
+```json
+{
+  "patient_id": "uuid",
+  "summary_type": "full",
+  "category": null,
+  "date_from": null,
+  "date_to": null,
+  "record_ids": null,
+  "record_types": null
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `patient_id` | UUID | Required. Patient to summarize. |
+| `summary_type` | string | `full`, `category`, `date_range`, or `single_record` |
+| `category` | string? | Filter by record category (e.g., `medication`) |
+| `date_from` | datetime? | Start of date range |
+| `date_to` | datetime? | End of date range |
+| `record_ids` | UUID[]? | Specific records to include |
+| `record_types` | string[]? | Filter by record types (e.g., `["medication", "condition"]`) |
 
 **`summary_type` values:** `full`, `category`, `date_range`, `single_record`
 
@@ -392,6 +606,29 @@ List previously built prompts.
 }
 ```
 
+### GET `/summary/prompts/:id`
+
+Get a single prompt detail, including any stored response.
+
+**Response (200):**
+```json
+{
+  "id": "uuid",
+  "summary_type": "full",
+  "system_prompt": "...",
+  "user_prompt": "...",
+  "target_model": "gemini-3-flash-preview",
+  "suggested_config": {},
+  "record_count": 47,
+  "de_identification_report": {},
+  "copyable_payload": "...",
+  "response_text": "Previously pasted or generated response, if any",
+  "generated_at": "2024-02-01T10:30:00Z"
+}
+```
+
+**Errors:** `404` (prompt not found or belongs to different user)
+
 ### POST `/summary/paste-response`
 
 User pastes back an AI response for storage. This is optional and user-initiated.
@@ -413,13 +650,99 @@ User pastes back an AI response for storage. This is optional and user-initiated
 }
 ```
 
+### POST `/summary/generate`
+
+Generate an AI summary by calling the Gemini API directly. Requires `GEMINI_API_KEY`.
+
+**Request:**
+```json
+{
+  "patient_id": "uuid",
+  "summary_type": "full",
+  "category": null,
+  "date_from": null,
+  "date_to": null,
+  "output_format": "natural_language",
+  "custom_system_prompt": null,
+  "custom_user_prompt": null
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `patient_id` | UUID | Required. Patient to summarize. |
+| `summary_type` | string | `full`, `category`, `date_range`, or `single_record` |
+| `output_format` | string | `natural_language`, `json`, or `both` |
+| `custom_system_prompt` | string? | Override the default system prompt |
+| `custom_user_prompt` | string? | Override the default user prompt |
+
+**Response (200):**
+```json
+{
+  "id": "uuid",
+  "natural_language": "The patient's records show...",
+  "json_data": null,
+  "record_count": 47,
+  "duplicate_warning": {
+    "total_records": 50,
+    "deduped_records": 47,
+    "duplicates_excluded": 3,
+    "message": "3 duplicate records were excluded from this summary."
+  },
+  "de_identification_report": {
+    "names_scrubbed": 12,
+    "dates_generalized": 8
+  },
+  "model_used": "gemini-3-flash-preview",
+  "generated_at": "2024-02-01T10:30:00Z"
+}
+```
+
+**Notes:**
+- `natural_language` contains the text summary (null when `output_format` is `json`)
+- `json_data` contains structured output (null when `output_format` is `natural_language`)
+- `duplicate_warning` is present only when duplicates were detected and excluded
+- All health data is de-identified via the PHI scrubber before the Gemini API call
+
+**Errors:** `400` (no records found, invalid request), `404` (patient not found)
+
+### GET `/summary/responses`
+
+List stored AI responses (both pasted and API-generated).
+
+**Response (200):**
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "summary_type": "full",
+      "record_count": 47,
+      "response_text": "First 200 characters of the response...",
+      "response_pasted_at": "2024-02-01T11:00:00Z"
+    }
+  ],
+  "total": 5
+}
+```
+
+**Notes:**
+- `response_text` is truncated to 200 characters in the list view
+- Use `GET /summary/prompts/:id` to retrieve the full response
+
 ---
 
 ## Deduplication
 
 ### GET `/dedup/candidates`
 
-List deduplication candidates.
+List deduplication candidates (paginated).
+
+**Query Parameters:**
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `page` | int | 1 | Page number (1-indexed) |
+| `limit` | int | 20 | Items per page |
 
 **Response (200):**
 ```json
@@ -449,12 +772,13 @@ List deduplication candidates.
         "effective_date": "2024-01-15T00:00:00Z"
       }
     }
-  ]
+  ],
+  "total": 5
 }
 ```
 
 **Notes:**
-- Frontend filters for `status === "pending"` client-side
+- Only `pending` candidates are returned (server-side filter)
 - `record_a` and `record_b` can be `null` if a record was deleted
 
 ### POST `/dedup/scan`
@@ -568,8 +892,8 @@ The backend MUST allow CORS from the frontend origin:
 
 ```
 Access-Control-Allow-Origin: http://localhost:3000
-Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS
-Access-Control-Allow-Headers: Authorization, Content-Type
+Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS
+Access-Control-Allow-Headers: Authorization, Content-Type, Accept
 Access-Control-Allow-Credentials: true
 ```
 
@@ -581,8 +905,8 @@ Access-Control-Allow-Credentials: true
 2. **JWT validation:** Verify token signature, expiration, and issuer on every authenticated request.
 3. **Audit logging:** Log every data access and mutation to the `audit_log` table.
 4. **Soft deletes only:** Never hard-delete health records. Use `deleted_at` timestamps.
-5. **No AI API calls:** The backend MUST NOT make any external HTTP calls to AI services. It builds prompts only.
-6. **No API keys:** No AI service API keys in code, config, or environment.
+5. **Dual-mode AI:** Mode 1 builds prompts locally (no API key). Mode 2 calls Gemini API with de-identified data only. All health data passes through the PHI scrubber before any external API call.
+6. **API key management:** Gemini API key stored in `.env` only. Never hardcoded in source. No other AI provider keys permitted.
 7. **Input validation:** Strict Pydantic validation on all inputs. Sanitize file uploads.
 8. **Password hashing:** bcrypt with cost >= 12.
 
