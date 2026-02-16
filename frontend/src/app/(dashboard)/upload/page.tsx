@@ -1,8 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { FolderUp, FileText, FileArchive, ChevronDown, ChevronUp } from "lucide-react";
+import { useDirectoryUpload } from "@/hooks/useDirectoryUpload";
+import { getFilesFromDrop } from "@/lib/getFilesFromDrop";
 import { api } from "@/lib/api";
 import type {
   UploadResponse,
@@ -119,8 +121,24 @@ export default function UploadPage() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
 
-  // --- Folder input ref ---
-  const folderInputRef = useRef<HTMLInputElement>(null);
+  // --- Directory upload (client-side zipping) ---
+  const {
+    folderInputRef,
+    isZipping,
+    zipProgress,
+    folderInfo,
+    selectFolder,
+    handleFolderSelect,
+    createZipFromFiles,
+    clearFolderInfo,
+  } = useDirectoryUpload({
+    onZipReady: (file) => {
+      setSelectedFiles((prev) => [...prev, file]);
+      setUploadResults([]);
+      setUploadError(null);
+    },
+    onError: (message) => setUploadError(message),
+  });
 
   // --- Load patients for entity confirmation ---
   useEffect(() => {
@@ -212,38 +230,13 @@ export default function UploadPage() {
     multiple: true,
   });
 
-  // --- Folder selection handler ---
-  const handleFolderSelect = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const files = e.target.files;
-      if (!files || files.length === 0) return;
-      const validFiles: File[] = [];
-      for (let i = 0; i < files.length; i++) {
-        const ext = getExtension(files[i].name);
-        if (
-          STRUCTURED_EXTENSIONS.has(ext) ||
-          UNSTRUCTURED_EXTENSIONS.has(ext)
-        ) {
-          validFiles.push(files[i]);
-        }
-      }
-      if (validFiles.length > 0) {
-        setSelectedFiles((prev) => [...prev, ...validFiles]);
-        setUploadResults([]);
-        setUploadError(null);
-      }
-      // Reset the input so the same folder can be re-selected
-      e.target.value = "";
-    },
-    []
-  );
-
   // --- Clear all selected files ---
   const clearFiles = useCallback(() => {
     setSelectedFiles([]);
     setUploadResults([]);
     setUploadError(null);
-  }, []);
+    clearFolderInfo();
+  }, [clearFolderInfo]);
 
   // --- Upload all files ---
   const handleUploadAll = useCallback(async () => {
@@ -384,6 +377,22 @@ export default function UploadPage() {
     [selectedPatient, selectedEntities]
   );
 
+  // --- Directory drop handler (intercepts before react-dropzone) ---
+  const handleDropCapture = useCallback(
+    async (e: React.DragEvent<HTMLDivElement>) => {
+      if (!e.dataTransfer) return;
+      const result = await getFilesFromDrop(e.dataTransfer);
+      if (result) {
+        // Directory was dropped — prevent react-dropzone from processing
+        e.stopPropagation();
+        e.preventDefault();
+        createZipFromFiles(result.files, result.folderName);
+      }
+      // If result is null, individual files were dropped — let react-dropzone handle it
+    },
+    [createZipFromFiles]
+  );
+
   // --- Derived counts ---
   const structuredCount = selectedFiles.filter(isStructured).length;
   const unstructuredCount = selectedFiles.filter(isUnstructured).length;
@@ -400,6 +409,7 @@ export default function UploadPage() {
         <RetroCardContent>
           <div
             {...getRootProps()}
+            onDropCapture={handleDropCapture}
             className="border-2 border-dashed transition-all duration-200 cursor-pointer"
             style={{
               borderColor: isDragActive
@@ -470,8 +480,9 @@ export default function UploadPage() {
             <RetroButton
               onClick={(e) => {
                 e.stopPropagation();
-                folderInputRef.current?.click();
+                selectFolder();
               }}
+              disabled={isZipping}
             >
               <FileArchive size={14} style={{ marginRight: "0.5rem" }} />
               Select Folder
@@ -480,7 +491,6 @@ export default function UploadPage() {
             <input
               ref={folderInputRef}
               type="file"
-              // @ts-expect-error webkitdirectory is not in standard types
               webkitdirectory=""
               directory=""
               multiple
@@ -490,6 +500,68 @@ export default function UploadPage() {
           </div>
         </RetroCardContent>
       </RetroCard>
+
+      {/* ==========================================
+          ZIPPING PROGRESS
+          ========================================== */}
+      {isZipping && folderInfo && (
+        <RetroCard>
+          <RetroCardContent>
+            <span
+              className="animate-pulse"
+              style={{
+                fontFamily: "VT323, monospace",
+                fontSize: "1.1rem",
+                color: "var(--theme-amber)",
+                display: "block",
+                marginBottom: "0.5rem",
+              }}
+            >
+              Preparing upload...
+            </span>
+            <p
+              style={{
+                fontSize: "0.8rem",
+                color: "var(--theme-text-dim)",
+                fontFamily: "var(--font-body)",
+                marginBottom: "0.75rem",
+              }}
+            >
+              {folderInfo.name} &mdash; {folderInfo.fileCount.toLocaleString()} files ({formatFileSize(folderInfo.totalSize)})
+            </p>
+            <div
+              style={{
+                height: "6px",
+                backgroundColor: "var(--theme-bg-deep)",
+                borderRadius: "3px",
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  height: "100%",
+                  width: `${zipProgress}%`,
+                  backgroundColor: "var(--theme-amber)",
+                  borderRadius: "3px",
+                  transition: "width 0.2s ease",
+                }}
+              />
+            </div>
+            <span
+              style={{
+                fontFamily: "VT323, monospace",
+                fontSize: "0.95rem",
+                color: "var(--theme-amber)",
+                display: "block",
+                textAlign: "right",
+                marginTop: "0.25rem",
+              }}
+            >
+              {zipProgress.toFixed(0)}%
+            </span>
+          </RetroCardContent>
+        </RetroCard>
+      )}
 
       {/* ==========================================
           SELECTED FILES DISPLAY
