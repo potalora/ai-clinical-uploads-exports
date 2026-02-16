@@ -1,3 +1,3 @@
-PAT_ID	DX_ID	DX_NAME	DATE_OF_ENTRY	NOTED_DATE	RESOLVED_DATE	PROBLEM_STATUS
-1001	DX001	Type 2 diabetes mellitus	03/15/2020	03/15/2020		Active
-1001	DX002	Essential hypertension	06/01/2019	06/01/2019		Active
+PAT_ID	DX_ID	DX_ID_DX_NAME	DESCRIPTION	NOTED_DATE	RESOLVED_DATE	PROBLEM_STATUS_C_NAME	CHRONIC_YN	PROBLEM_CMT
+1001	DX001	Type 2 diabetes mellitus	Type 2 diabetes mellitus	03/15/2020 12:00:00 AM		Active	Y	Monitor A1c quarterly
+1001	DX002	Essential hypertension	Essential hypertension	06/01/2019 12:00:00 AM		Active	Y

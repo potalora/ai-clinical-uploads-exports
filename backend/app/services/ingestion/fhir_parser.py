@@ -29,6 +29,9 @@ SUPPORTED_RESOURCE_TYPES = {
     "CarePlan": "care_plan",
     "Communication": "communication",
     "Appointment": "appointment",
+    "CareTeam": "care_team",
+    "ImmunizationRecommendation": "immunization",
+    "QuestionnaireResponse": "questionnaire_response",
 }
 
 
@@ -237,6 +240,42 @@ def build_display_text(resource: dict, resource_type: str) -> str:
         if title:
             return title
         return "Care Plan"
+
+    if resource_type == "FamilyMemberHistory":
+        conditions = resource.get("condition", [])
+        if conditions and isinstance(conditions[0], dict):
+            code = conditions[0].get("code", {})
+            text = code.get("text") if isinstance(code, dict) else None
+            if text:
+                rel = resource.get("relationship", {})
+                rel_text = rel.get("text") if isinstance(rel, dict) else None
+                return f"{text} ({rel_text})" if rel_text else text
+        return "Family History"
+
+    if resource_type == "CareTeam":
+        name = resource.get("name")
+        if name:
+            return name
+        return "Care Team"
+
+    if resource_type == "ImmunizationRecommendation":
+        recs = resource.get("recommendation", [])
+        if recs:
+            vaccine = recs[0].get("vaccineCode", [])
+            if vaccine and isinstance(vaccine, list) and vaccine[0].get("text"):
+                return vaccine[0]["text"]
+            if vaccine and isinstance(vaccine, list):
+                codings = vaccine[0].get("coding", [])
+                for c in codings:
+                    if c.get("display"):
+                        return c["display"]
+        return "Immunization Recommendation"
+
+    if resource_type == "QuestionnaireResponse":
+        questionnaire = resource.get("questionnaire")
+        if questionnaire:
+            return f"Questionnaire: {questionnaire}"
+        return "Questionnaire Response"
 
     return resource_type
 

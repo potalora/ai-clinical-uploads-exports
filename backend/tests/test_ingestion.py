@@ -417,6 +417,414 @@ class TestEpicMappers:
         result = mapper.to_fhir(row)
         assert result["condition"][0]["onsetString"] == "childhood"
 
+    # ── ProblemListMapper tests ──────────────────────────────────────
+
+    def test_problem_list_mapper_happy_path(self):
+        """ProblemListMapper produces Condition with all fields populated."""
+        from app.services.ingestion.epic_mappers.problems import ProblemListMapper
+
+        mapper = ProblemListMapper()
+        row = {
+            "DX_ID_DX_NAME": "Essential Hypertension",
+            "DESCRIPTION": "High blood pressure",
+            "NOTED_DATE": "3/15/2021 12:00:00 AM",
+            "RESOLVED_DATE": "",
+            "PROBLEM_STATUS_C_NAME": "Active",
+            "CHRONIC_YN": "Y",
+            "PROBLEM_CMT": "Controlled with medication",
+        }
+        result = mapper.to_fhir(row)
+        assert result is not None
+        assert result["resourceType"] == "Condition"
+        assert result["code"]["text"] == "High blood pressure"
+        assert result["clinicalStatus"]["coding"][0]["code"] == "active"
+        assert result["category"][0]["coding"][0]["code"] == "problem-list-item"
+        assert result["onsetDateTime"] is not None
+        # chronic flag adds a second category entry
+        assert any(cat.get("text") == "chronic" for cat in result["category"])
+        assert result["note"][0]["text"] == "Controlled with medication"
+
+    def test_problem_list_mapper_empty_gate_returns_none(self):
+        """ProblemListMapper returns None when both DX_ID_DX_NAME and DESCRIPTION are empty."""
+        from app.services.ingestion.epic_mappers.problems import ProblemListMapper
+
+        mapper = ProblemListMapper()
+        row = {
+            "DX_ID_DX_NAME": "",
+            "DESCRIPTION": "",
+            "NOTED_DATE": "",
+            "RESOLVED_DATE": "",
+            "PROBLEM_STATUS_C_NAME": "",
+            "CHRONIC_YN": "",
+            "PROBLEM_CMT": "",
+        }
+        assert mapper.to_fhir(row) is None
+
+    def test_problem_list_mapper_resolved_status(self):
+        """ProblemListMapper maps resolved status and abatementDateTime."""
+        from app.services.ingestion.epic_mappers.problems import ProblemListMapper
+
+        mapper = ProblemListMapper()
+        row = {
+            "DX_ID_DX_NAME": "Ankle Sprain",
+            "DESCRIPTION": "",
+            "NOTED_DATE": "1/10/2023 12:00:00 AM",
+            "RESOLVED_DATE": "3/10/2023 12:00:00 AM",
+            "PROBLEM_STATUS_C_NAME": "Resolved",
+            "CHRONIC_YN": "N",
+            "PROBLEM_CMT": "",
+        }
+        result = mapper.to_fhir(row)
+        assert result is not None
+        assert result["clinicalStatus"]["coding"][0]["code"] == "resolved"
+        assert "abatementDateTime" in result
+        assert result["code"]["text"] == "Ankle Sprain"
+
+    def test_problem_list_mapper_falls_back_to_dx_name(self):
+        """ProblemListMapper uses DX_ID_DX_NAME when DESCRIPTION is empty."""
+        from app.services.ingestion.epic_mappers.problems import ProblemListMapper
+
+        mapper = ProblemListMapper()
+        row = {
+            "DX_ID_DX_NAME": "Type 2 Diabetes",
+            "DESCRIPTION": "",
+            "PROBLEM_STATUS_C_NAME": "Active",
+        }
+        result = mapper.to_fhir(row)
+        assert result is not None
+        assert result["code"]["text"] == "Type 2 Diabetes"
+
+    # ── MedicalHxMapper tests ────────────────────────────────────────
+
+    def test_medical_hx_mapper_happy_path(self):
+        """MedicalHxMapper produces Condition with Medical History category."""
+        from app.services.ingestion.epic_mappers.problems import MedicalHxMapper
+
+        mapper = MedicalHxMapper()
+        row = {
+            "DX_ID_DX_NAME": "Appendectomy",
+            "MEDICAL_HX_DATE": "6/20/2015 12:00:00 AM",
+            "MED_HX_ANNOTATION": "Emergency surgery, no complications",
+        }
+        result = mapper.to_fhir(row)
+        assert result is not None
+        assert result["resourceType"] == "Condition"
+        assert result["code"]["text"] == "Appendectomy"
+        assert result["category"][0]["text"] == "Medical History"
+        assert result["category"][0]["coding"][0]["code"] == "problem-list-item"
+        assert result["onsetDateTime"] is not None
+        assert result["note"][0]["text"] == "Emergency surgery, no complications"
+        assert result["clinicalStatus"]["coding"][0]["code"] == "active"
+
+    def test_medical_hx_mapper_empty_gate_returns_none(self):
+        """MedicalHxMapper returns None when DX_ID_DX_NAME is empty."""
+        from app.services.ingestion.epic_mappers.problems import MedicalHxMapper
+
+        mapper = MedicalHxMapper()
+        assert mapper.to_fhir({"DX_ID_DX_NAME": ""}) is None
+        assert mapper.to_fhir({}) is None
+
+    def test_medical_hx_mapper_no_annotation_no_date(self):
+        """MedicalHxMapper works with only the dx name, no optional fields."""
+        from app.services.ingestion.epic_mappers.problems import MedicalHxMapper
+
+        mapper = MedicalHxMapper()
+        row = {
+            "DX_ID_DX_NAME": "Childhood Asthma",
+            "MEDICAL_HX_DATE": "",
+            "MED_HX_ANNOTATION": "",
+        }
+        result = mapper.to_fhir(row)
+        assert result is not None
+        assert result["code"]["text"] == "Childhood Asthma"
+        assert "onsetDateTime" not in result
+        assert "note" not in result
+
+    # ── OrderMedMapper tests ─────────────────────────────────────────
+
+    def test_order_med_mapper_happy_path(self):
+        """OrderMedMapper produces MedicationRequest with all fields."""
+        from app.services.ingestion.epic_mappers.medications import OrderMedMapper
+
+        mapper = OrderMedMapper()
+        row = {
+            "DISPLAY_NAME": "Lisinopril 10 MG Oral Tablet",
+            "MEDICATION_ID_MEDICATION_NAME": "Lisinopril",
+            "DOSAGE": "10 mg daily",
+            "DESCRIPTION": "Take once daily",
+            "MED_ROUTE_C_NAME": "Oral",
+            "START_DATE": "1/5/2024 12:00:00 AM",
+            "END_DATE": "7/5/2024 12:00:00 AM",
+            "ORDERING_DATE": "1/3/2024 12:00:00 AM",
+            "ORDER_STATUS_C_NAME": "Completed",
+            "QUANTITY": "90",
+            "REFILLS": "3",
+            "MED_PRESC_PROV_ID_PROV_NAME": "Dr. Garcia",
+        }
+        result = mapper.to_fhir(row)
+        assert result is not None
+        assert result["resourceType"] == "MedicationRequest"
+        assert result["medicationCodeableConcept"]["text"] == "Lisinopril 10 MG Oral Tablet"
+        assert result["status"] == "completed"
+        assert result["intent"] == "order"
+        assert result["authoredOn"] is not None
+        assert result["dosageInstruction"][0]["text"] == "10 mg daily"
+        assert result["dosageInstruction"][0]["route"]["text"] == "Oral"
+        assert result["dispenseRequest"]["quantity"]["value"] == "90"
+        assert result["dispenseRequest"]["numberOfRepeatsAllowed"] == "3"
+        assert result["requester"]["display"] == "Dr. Garcia"
+        # effectivePeriod with start and end
+        assert "effectivePeriod" in result
+        assert "start" in result["effectivePeriod"]
+        assert "end" in result["effectivePeriod"]
+
+    def test_order_med_mapper_empty_gate_returns_none(self):
+        """OrderMedMapper returns None when both DISPLAY_NAME and MEDICATION_ID_MEDICATION_NAME are empty."""
+        from app.services.ingestion.epic_mappers.medications import OrderMedMapper
+
+        mapper = OrderMedMapper()
+        row = {
+            "DISPLAY_NAME": "",
+            "MEDICATION_ID_MEDICATION_NAME": "",
+        }
+        assert mapper.to_fhir(row) is None
+
+    def test_order_med_mapper_cancelled_status(self):
+        """OrderMedMapper maps cancelled/discontinued status correctly."""
+        from app.services.ingestion.epic_mappers.medications import OrderMedMapper
+
+        mapper = OrderMedMapper()
+        row = {
+            "DISPLAY_NAME": "Atorvastatin 20 MG",
+            "ORDER_STATUS_C_NAME": "Discontinued",
+        }
+        result = mapper.to_fhir(row)
+        assert result is not None
+        assert result["status"] == "cancelled"
+
+    def test_order_med_mapper_fallback_to_medication_name(self):
+        """OrderMedMapper falls back to MEDICATION_ID_MEDICATION_NAME when DISPLAY_NAME is empty."""
+        from app.services.ingestion.epic_mappers.medications import OrderMedMapper
+
+        mapper = OrderMedMapper()
+        row = {
+            "DISPLAY_NAME": "",
+            "MEDICATION_ID_MEDICATION_NAME": "Metformin",
+            "ORDER_STATUS_C_NAME": "Active",
+        }
+        result = mapper.to_fhir(row)
+        assert result is not None
+        assert result["medicationCodeableConcept"]["text"] == "Metformin"
+        assert result["status"] == "active"
+
+    # ── OrderResultsMapper tests ─────────────────────────────────────
+
+    def test_order_results_mapper_happy_path(self):
+        """OrderResultsMapper produces Observation with all lab fields."""
+        from app.services.ingestion.epic_mappers.results import OrderResultsMapper
+
+        mapper = OrderResultsMapper()
+        row = {
+            "COMPONENT_ID_NAME": "Glucose",
+            "ORD_VALUE": "95",
+            "ORD_NUM_VALUE": "95",
+            "REFERENCE_UNIT": "mg/dL",
+            "REFERENCE_LOW": "70",
+            "REFERENCE_HIGH": "100",
+            "RESULT_DATE": "2/10/2024 12:00:00 AM",
+            "RESULT_STATUS_C_NAME": "Final",
+            "RESULT_FLAG_C_NAME": "",
+            "COMPON_LNC_ID_LNC_LONG_NAME": "Glucose [Mass/volume] in Blood",
+        }
+        result = mapper.to_fhir(row)
+        assert result is not None
+        assert result["resourceType"] == "Observation"
+        assert result["status"] == "final"
+        assert result["category"][0]["coding"][0]["code"] == "laboratory"
+        assert result["code"]["text"] == "Glucose"
+        assert result["code"]["coding"][0]["system"] == "http://loinc.org"
+        assert result["code"]["coding"][0]["display"] == "Glucose [Mass/volume] in Blood"
+        assert result["valueQuantity"]["value"] == 95.0
+        assert result["valueQuantity"]["unit"] == "mg/dL"
+        assert result["effectiveDateTime"] is not None
+        assert result["referenceRange"][0]["low"]["value"] == 70.0
+        assert result["referenceRange"][0]["high"]["value"] == 100.0
+
+    def test_order_results_mapper_empty_gate_returns_none(self):
+        """OrderResultsMapper returns None when COMPONENT_ID_NAME is empty."""
+        from app.services.ingestion.epic_mappers.results import OrderResultsMapper
+
+        mapper = OrderResultsMapper()
+        assert mapper.to_fhir({"COMPONENT_ID_NAME": ""}) is None
+        assert mapper.to_fhir({}) is None
+
+    def test_order_results_mapper_high_flag(self):
+        """OrderResultsMapper maps high result flag to H interpretation."""
+        from app.services.ingestion.epic_mappers.results import OrderResultsMapper
+
+        mapper = OrderResultsMapper()
+        row = {
+            "COMPONENT_ID_NAME": "Hemoglobin A1c",
+            "ORD_VALUE": "7.2",
+            "ORD_NUM_VALUE": "7.2",
+            "REFERENCE_UNIT": "%",
+            "REFERENCE_LOW": "",
+            "REFERENCE_HIGH": "",
+            "RESULT_DATE": "",
+            "RESULT_STATUS_C_NAME": "Final",
+            "RESULT_FLAG_C_NAME": "High",
+            "COMPON_LNC_ID_LNC_LONG_NAME": "",
+        }
+        result = mapper.to_fhir(row)
+        assert result is not None
+        assert result["interpretation"][0]["coding"][0]["code"] == "H"
+
+    def test_order_results_mapper_preliminary_status(self):
+        """OrderResultsMapper maps preliminary status correctly."""
+        from app.services.ingestion.epic_mappers.results import OrderResultsMapper
+
+        mapper = OrderResultsMapper()
+        row = {
+            "COMPONENT_ID_NAME": "WBC",
+            "ORD_VALUE": "Pending",
+            "ORD_NUM_VALUE": "",
+            "REFERENCE_UNIT": "",
+            "RESULT_STATUS_C_NAME": "Preliminary",
+            "RESULT_FLAG_C_NAME": "",
+            "COMPON_LNC_ID_LNC_LONG_NAME": "",
+        }
+        result = mapper.to_fhir(row)
+        assert result is not None
+        assert result["status"] == "preliminary"
+        assert result["valueString"] == "Pending"
+        assert "valueQuantity" not in result
+
+    # ── PatEncMapper tests ───────────────────────────────────────────
+
+    def test_pat_enc_mapper_happy_path(self):
+        """PatEncMapper produces Encounter with all fields populated."""
+        from app.services.ingestion.epic_mappers.encounters import PatEncMapper
+
+        mapper = PatEncMapper()
+        row = {
+            "CONTACT_DATE": "4/15/2024 12:00:00 AM",
+            "APPT_STATUS_C_NAME": "Completed",
+            "FIN_CLASS_C_NAME": "Outpatient",
+            "DEPARTMENT_ID_EXTERNAL_NAME": "Family Medicine Clinic",
+            "VISIT_PROV_ID_PROV_NAME": "Dr. Williams",
+            "VISIT_PROV_TITLE_NAME": "MD",
+            "HOSP_DISCHRG_TIME": "",
+            "CONTACT_COMMENT": "Annual physical exam",
+        }
+        result = mapper.to_fhir(row)
+        assert result is not None
+        assert result["resourceType"] == "Encounter"
+        assert result["status"] == "finished"
+        assert result["class"]["code"] == "AMB"
+        assert result["period"]["start"] is not None
+        assert result["location"][0]["location"]["display"] == "Family Medicine Clinic"
+        assert result["participant"][0]["individual"]["display"] == "Dr. Williams, MD"
+        assert result["reasonCode"][0]["text"] == "Annual physical exam"
+
+    def test_pat_enc_mapper_empty_gate_returns_none(self):
+        """PatEncMapper returns None when CONTACT_DATE is empty or unparseable."""
+        from app.services.ingestion.epic_mappers.encounters import PatEncMapper
+
+        mapper = PatEncMapper()
+        assert mapper.to_fhir({"CONTACT_DATE": ""}) is None
+        assert mapper.to_fhir({}) is None
+
+    def test_pat_enc_mapper_cancelled_no_show_status(self):
+        """PatEncMapper maps 'No Show' to cancelled status."""
+        from app.services.ingestion.epic_mappers.encounters import PatEncMapper
+
+        mapper = PatEncMapper()
+        row = {
+            "CONTACT_DATE": "5/1/2024 12:00:00 AM",
+            "APPT_STATUS_C_NAME": "No Show",
+            "FIN_CLASS_C_NAME": "",
+        }
+        result = mapper.to_fhir(row)
+        assert result is not None
+        assert result["status"] == "cancelled"
+
+    def test_pat_enc_mapper_inpatient_class(self):
+        """PatEncMapper maps inpatient financial class to IMP encounter class."""
+        from app.services.ingestion.epic_mappers.encounters import PatEncMapper
+
+        mapper = PatEncMapper()
+        row = {
+            "CONTACT_DATE": "6/10/2024 12:00:00 AM",
+            "APPT_STATUS_C_NAME": "Completed",
+            "FIN_CLASS_C_NAME": "Inpatient",
+            "DEPARTMENT_ID_EXTERNAL_NAME": "ICU",
+            "VISIT_PROV_ID_PROV_NAME": "Dr. Lee",
+            "VISIT_PROV_TITLE_NAME": "",
+            "HOSP_DISCHRG_TIME": "6/15/2024 12:00:00 AM",
+            "CONTACT_COMMENT": "",
+        }
+        result = mapper.to_fhir(row)
+        assert result is not None
+        assert result["class"]["code"] == "IMP"
+        assert "end" in result["period"]
+        # No title → provider name only (no trailing comma)
+        assert result["participant"][0]["individual"]["display"] == "Dr. Lee"
+
+    # ── DocInformationMapper tests ───────────────────────────────────
+
+    def test_doc_information_mapper_happy_path(self):
+        """DocInformationMapper produces DocumentReference with all fields."""
+        from app.services.ingestion.epic_mappers.documents import DocInformationMapper
+
+        mapper = DocInformationMapper()
+        row = {
+            "DOC_INFO_TYPE_C_NAME": "Discharge Summary",
+            "DOC_RECV_TIME": "7/20/2024 12:00:00 AM",
+            "DOC_STAT_C_NAME": "Active",
+            "DOC_DESCR": "Post-surgical discharge instructions",
+            "RECV_BY_USER_ID_NAME": "Nurse Johnson",
+            "IS_SCANNED_YN": "Y",
+        }
+        result = mapper.to_fhir(row)
+        assert result is not None
+        assert result["resourceType"] == "DocumentReference"
+        assert result["type"]["text"] == "Discharge Summary"
+        assert result["status"] == "current"
+        assert result["description"] == "Post-surgical discharge instructions"
+        assert result["date"] is not None
+        assert result["author"][0]["display"] == "Nurse Johnson"
+        assert result["category"][0]["text"] == "scanned"
+
+    def test_doc_information_mapper_empty_gate_returns_none(self):
+        """DocInformationMapper returns None when DOC_INFO_TYPE_C_NAME is empty."""
+        from app.services.ingestion.epic_mappers.documents import DocInformationMapper
+
+        mapper = DocInformationMapper()
+        assert mapper.to_fhir({"DOC_INFO_TYPE_C_NAME": ""}) is None
+        assert mapper.to_fhir({}) is None
+
+    def test_doc_information_mapper_superseded_status(self):
+        """DocInformationMapper maps deleted/inactive status to superseded."""
+        from app.services.ingestion.epic_mappers.documents import DocInformationMapper
+
+        mapper = DocInformationMapper()
+        row = {
+            "DOC_INFO_TYPE_C_NAME": "Lab Report",
+            "DOC_RECV_TIME": "",
+            "DOC_STAT_C_NAME": "Inactive",
+            "DOC_DESCR": "",
+            "RECV_BY_USER_ID_NAME": "",
+            "IS_SCANNED_YN": "N",
+        }
+        result = mapper.to_fhir(row)
+        assert result is not None
+        assert result["status"] == "superseded"
+        # description falls back to doc_type when DOC_DESCR is empty
+        assert result["description"] == "Lab Report"
+        assert "date" not in result
+        assert "author" not in result
+        assert "category" not in result
+
 
 class TestEpicMapperRegistration:
     """Verify all mappers are properly registered."""

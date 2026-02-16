@@ -50,10 +50,13 @@ class OrderMedMapper(EpicMapper):
                 disp["numberOfRepeatsAllowed"] = refills
             resource["dispenseRequest"] = disp
 
-        if start_date:
-            resource["_effectiveStart"] = start_date.isoformat()
-        if end_date:
-            resource["_effectiveEnd"] = end_date.isoformat()
+        if start_date or end_date:
+            period = {}
+            if start_date:
+                period["start"] = start_date.isoformat()
+            if end_date:
+                period["end"] = end_date.isoformat()
+            resource["effectivePeriod"] = period
 
         prescriber = self.safe_get(row, "MED_PRESC_PROV_ID_PROV_NAME")
         if prescriber:

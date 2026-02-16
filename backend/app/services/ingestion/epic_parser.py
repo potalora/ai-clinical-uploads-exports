@@ -23,7 +23,7 @@ from app.services.ingestion.epic_mappers.referrals import ReferralMapper
 from app.services.ingestion.epic_mappers.results import OrderResultsMapper
 from app.services.ingestion.epic_mappers.social_hx import SocialHxMapper
 from app.services.ingestion.epic_mappers.vitals import VitalsMapper
-from app.services.ingestion.fhir_parser import map_fhir_resource
+from app.services.ingestion.fhir_parser import build_display_text, map_fhir_resource
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +56,9 @@ RECORD_TYPE_MAP = {
     "AllergyIntolerance": "allergy",
     "ServiceRequest": "service_request",
     "FamilyMemberHistory": "condition",
+    "CareTeam": "care_team",
+    "ImmunizationRecommendation": "immunization",
+    "QuestionnaireResponse": "questionnaire_response",
 }
 
 
@@ -138,10 +141,7 @@ async def parse_epic_export(
                             "code_system": code_system,
                             "code_value": code_value,
                             "code_display": code_display,
-                            "display_text": fhir_resource.get("code", {}).get("text", "")
-                            or fhir_resource.get("type", {}).get("text", "")
-                            or fhir_resource.get("description", "")
-                            or resource_type,
+                            "display_text": build_display_text(fhir_resource, resource_type),
                         }
 
                         batch.append(mapped)
