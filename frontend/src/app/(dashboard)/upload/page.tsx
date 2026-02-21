@@ -1483,6 +1483,7 @@ export default function UploadPage() {
                   <RetroTableHead>Source</RetroTableHead>
                   <RetroTableHead>Records</RetroTableHead>
                   <RetroTableHead>Status</RetroTableHead>
+                  <RetroTableHead>Actions</RetroTableHead>
                 </RetroTableHeader>
                 <RetroTableBody>
                   {history.map((upload) => (
@@ -1545,12 +1546,37 @@ export default function UploadPage() {
                                     : upload.ingestion_status ===
                                         "awaiting_confirmation"
                                       ? "var(--record-procedure-text)"
-                                      : "var(--theme-text-muted)",
+                                      : upload.ingestion_status ===
+                                          "pending_extraction"
+                                        ? "var(--theme-ochre)"
+                                        : "var(--theme-text-muted)",
                             color: "var(--theme-bg-deep)",
                           }}
                         >
                           {upload.ingestion_status}
                         </span>
+                      </RetroTableCell>
+                      <RetroTableCell>
+                        {upload.ingestion_status === "pending_extraction" && (
+                          <RetroButton
+                            variant="ghost"
+                            onClick={async (e: React.MouseEvent) => {
+                              e.stopPropagation();
+                              try {
+                                await api.post<TriggerExtractionResponse>(
+                                  "/upload/trigger-extraction",
+                                  { upload_ids: [upload.id] }
+                                );
+                                setHistoryLoaded(false);
+                              } catch {
+                                // Silently fail
+                              }
+                            }}
+                            style={{ fontSize: "0.65rem", padding: "0.15rem 0.4rem" }}
+                          >
+                            Extract
+                          </RetroButton>
+                        )}
                       </RetroTableCell>
                     </RetroTableRow>
                   ))}

@@ -91,9 +91,24 @@ export interface UploadResponse {
   unstructured_uploads?: { upload_id: string; filename: string; status: string }[];
 }
 
+export interface PendingExtractionFile {
+  id: string;
+  filename: string;
+  mime_type: string;
+  file_category: string;
+  file_size_bytes: number | null;
+  created_at: string | null;
+}
+
 export interface TriggerExtractionResponse {
   triggered: number;
-  results: { upload_id: string; status: string; error?: string }[];
+  failed: number;
+  results: { upload_id: string; status: string }[];
+}
+
+export interface PendingExtractionResponse {
+  files: PendingExtractionFile[];
+  total: number;
 }
 
 export interface LabItem {
