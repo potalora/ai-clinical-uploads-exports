@@ -71,3 +71,42 @@ class BatchUploadResponse(BaseModel):
 class ConfirmExtractionRequest(BaseModel):
     confirmed_entities: list[ExtractedEntitySchema]
     patient_id: str
+
+
+class TriggerExtractionRequest(BaseModel):
+    upload_ids: list[str]
+
+
+class PendingExtractionFile(BaseModel):
+    id: str
+    filename: str
+    mime_type: str
+    file_category: str
+    file_size_bytes: int | None = None
+    created_at: str | None = None
+    ingestion_status: str | None = None
+
+
+class TriggerExtractionResult(BaseModel):
+    upload_id: str
+    status: str
+
+
+class TriggerExtractionResponse(BaseModel):
+    triggered: int
+    failed: int
+    results: list[TriggerExtractionResult]
+
+
+class PendingExtractionResponse(BaseModel):
+    files: list[PendingExtractionFile]
+    total: int
+
+
+class ExtractionProgressResponse(BaseModel):
+    total: int
+    completed: int
+    processing: int
+    failed: int
+    pending: int
+    records_created: int

@@ -15,8 +15,14 @@ logging.basicConfig(
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
+    if not settings.gemini_api_key:
+        logger.warning("GEMINI_API_KEY is not set — extraction and summarization will fail")
+
     app = FastAPI(
         title="AI Web Records API",
         description="Personal health records management API",

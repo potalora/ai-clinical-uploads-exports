@@ -22,9 +22,18 @@ import { RetroLoadingState } from "@/components/retro/RetroLoadingState";
 import { RetroBadge } from "@/components/retro/RetroBadge";
 import { RecordDetailSheet } from "@/components/retro/RecordDetailSheet";
 import { ConfirmDialog } from "@/components/retro/ConfirmDialog";
+import {
+  RetroTable,
+  RetroTableHeader,
+  RetroTableHead,
+  RetroTableBody,
+  RetroTableRow,
+  RetroTableCell,
+} from "@/components/retro/RetroTable";
 
 const TABS = [
   { key: "records", label: "Records" },
+  { key: "extractions", label: "Extractions" },
   { key: "dedup", label: "Dedup" },
   { key: "sys", label: "System" },
 ];
@@ -51,10 +60,325 @@ export default function AdminPage() {
       <RetroTabs tabs={TABS} active={activeTab} onChange={handleTabChange} />
       <div className="mt-4">
         {activeTab === "records" && <RecordsTab />}
+        {activeTab === "extractions" && <ExtractionsTab />}
         {activeTab === "dedup" && <DedupTab />}
         {activeTab === "sys" && <SystemTab />}
       </div>
     </div>
+  );
+}
+
+/* ==========================================
+   EXTRACTIONS TAB — Pending extraction management
+   ========================================== */
+
+function ExtractionsTab() {
+  interface ExtractionFile {
+    id: string;
+    filename: string;
+    mime_type: string;
+    file_category: string;
+    file_size_bytes: number | null;
+    created_at: string | null;
+    ingestion_status?: string;
+  }
+
+  const [files, setFiles] = useState<ExtractionFile[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [triggering, setTriggering] = useState(false);
+
+  const fetchFiles = useCallback(async () => {
+    setLoading(true);
+    try {
+      const resp = await api.get<{
+        files: ExtractionFile[];
+        total: number;
+      }>("/upload/pending-extraction?statuses=pending_extraction,processing,failed");
+      setFiles(resp.files);
+    } catch {
+      setFiles([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchFiles();
+  }, [fetchFiles]);
+
+  const handleTrigger = async () => {
+    if (selected.size === 0) return;
+    setTriggering(true);
+    try {
+      await api.post("/upload/trigger-extraction", {
+        upload_ids: Array.from(selected),
+      });
+      setSelected(new Set());
+      setTimeout(fetchFiles, 1000);
+    } catch {
+      // Silently fail
+    } finally {
+      setTriggering(false);
+    }
+  };
+
+  const toggleAll = () => {
+    if (selected.size === files.length) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(files.map((f) => f.id)));
+    }
+  };
+
+  if (loading) return <RetroLoadingState text="Loading extractions" />;
+
+  if (files.length === 0) {
+    return (
+      <RetroCard>
+        <RetroCardContent>
+          <p
+            style={{
+              textAlign: "center",
+              padding: "2rem 0",
+              fontSize: "0.8rem",
+              color: "var(--theme-text-muted)",
+              fontFamily: "var(--font-body)",
+            }}
+          >
+            No files pending extraction, processing, or failed
+          </p>
+        </RetroCardContent>
+      </RetroCard>
+    );
+  }
+
+  const pendingCount = files.filter((f) => f.ingestion_status === "pending_extraction" || !f.ingestion_status).length;
+  const processingCount = files.filter((f) => f.ingestion_status === "processing").length;
+  const failedCount = files.filter((f) => f.ingestion_status === "failed").length;
+
+  return (
+    <RetroCard>
+      <RetroCardHeader>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
+          <div>
+            <GlowText as="h3" className="text-sm">
+              {files.length} File{files.length !== 1 ? "s" : ""}
+            </GlowText>
+            <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.35rem" }}>
+              {pendingCount > 0 && (
+                <span
+                  style={{
+                    fontSize: "0.6rem",
+                    fontWeight: 600,
+                    padding: "0.1rem 0.4rem",
+                    borderRadius: "3px",
+                    backgroundColor: "var(--theme-ochre)",
+                    color: "var(--theme-bg-deep)",
+                    fontFamily: "var(--font-body)",
+                  }}
+                >
+                  {pendingCount} pending
+                </span>
+              )}
+              {processingCount > 0 && (
+                <span
+                  style={{
+                    fontSize: "0.6rem",
+                    fontWeight: 600,
+                    padding: "0.1rem 0.4rem",
+                    borderRadius: "3px",
+                    backgroundColor: "var(--theme-amber)",
+                    color: "var(--theme-bg-deep)",
+                    fontFamily: "var(--font-body)",
+                  }}
+                >
+                  {processingCount} processing
+                </span>
+              )}
+              {failedCount > 0 && (
+                <span
+                  style={{
+                    fontSize: "0.6rem",
+                    fontWeight: 600,
+                    padding: "0.1rem 0.4rem",
+                    borderRadius: "3px",
+                    backgroundColor: "var(--theme-terracotta)",
+                    color: "var(--theme-bg-deep)",
+                    fontFamily: "var(--font-body)",
+                  }}
+                >
+                  {failedCount} failed
+                </span>
+              )}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: "0.5rem" }}>
+            <RetroButton
+              onClick={handleTrigger}
+              disabled={selected.size === 0 || triggering}
+            >
+              {triggering
+                ? "Triggering..."
+                : `Extract ${selected.size || "Selected"}`}
+            </RetroButton>
+          </div>
+        </div>
+      </RetroCardHeader>
+      <RetroCardContent>
+        <RetroTable>
+          <RetroTableHeader>
+            <RetroTableHead className="w-8">
+              <input
+                type="checkbox"
+                checked={selected.size === files.length && files.length > 0}
+                onChange={toggleAll}
+                disabled={triggering}
+                style={{ accentColor: "var(--theme-amber)" }}
+              />
+            </RetroTableHead>
+            <RetroTableHead>File</RetroTableHead>
+            <RetroTableHead>Type</RetroTableHead>
+            <RetroTableHead>Status</RetroTableHead>
+            <RetroTableHead>Size</RetroTableHead>
+            <RetroTableHead>Uploaded</RetroTableHead>
+          </RetroTableHeader>
+          <RetroTableBody>
+            {files.map((file) => {
+              const ext = file.filename.split(".").pop()?.toLowerCase() || "";
+              const badgeColor =
+                ext === "pdf"
+                  ? "var(--theme-terracotta)"
+                  : ext === "rtf"
+                    ? "var(--theme-sage)"
+                    : "var(--theme-ochre)";
+              const status = file.ingestion_status || "pending_extraction";
+              return (
+                <RetroTableRow key={file.id}>
+                  <RetroTableCell>
+                    <input
+                      type="checkbox"
+                      checked={selected.has(file.id)}
+                      onChange={() => {
+                        setSelected((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(file.id)) next.delete(file.id);
+                          else next.add(file.id);
+                          return next;
+                        });
+                      }}
+                      disabled={triggering}
+                      style={{ accentColor: "var(--theme-amber)" }}
+                    />
+                  </RetroTableCell>
+                  <RetroTableCell>
+                    <span
+                      style={{
+                        fontSize: "0.75rem",
+                        fontFamily: "var(--font-body)",
+                        color: "var(--theme-text)",
+                      }}
+                    >
+                      {file.filename}
+                    </span>
+                  </RetroTableCell>
+                  <RetroTableCell>
+                    <span
+                      style={{
+                        fontSize: "0.6rem",
+                        fontWeight: 700,
+                        padding: "0.1rem 0.4rem",
+                        borderRadius: "3px",
+                        backgroundColor: badgeColor,
+                        color: "var(--theme-bg-deep)",
+                        fontFamily: "var(--font-body)",
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      {ext}
+                    </span>
+                  </RetroTableCell>
+                  <RetroTableCell>
+                    <span
+                      style={{
+                        fontSize: "0.6rem",
+                        fontWeight: 600,
+                        padding: "0.1rem 0.4rem",
+                        borderRadius: "3px",
+                        fontFamily: "var(--font-body)",
+                        backgroundColor:
+                          status === "processing"
+                            ? "var(--theme-amber)"
+                            : status === "failed"
+                              ? "var(--theme-terracotta)"
+                              : "var(--theme-ochre)",
+                        color: "var(--theme-bg-deep)",
+                      }}
+                    >
+                      {status === "pending_extraction" ? "pending" : status}
+                    </span>
+                  </RetroTableCell>
+                  <RetroTableCell>
+                    <span
+                      style={{
+                        fontFamily: "VT323, monospace",
+                        fontSize: "0.9rem",
+                        color: "var(--theme-text-dim)",
+                      }}
+                    >
+                      {file.file_size_bytes
+                        ? file.file_size_bytes < 1024
+                          ? `${file.file_size_bytes} B`
+                          : file.file_size_bytes < 1024 * 1024
+                            ? `${(file.file_size_bytes / 1024).toFixed(1)} KB`
+                            : `${(file.file_size_bytes / (1024 * 1024)).toFixed(1)} MB`
+                        : "--"}
+                    </span>
+                  </RetroTableCell>
+                  <RetroTableCell>
+                    <span
+                      style={{
+                        fontFamily: "VT323, monospace",
+                        fontSize: "0.9rem",
+                        color: "var(--theme-text-dim)",
+                      }}
+                    >
+                      {file.created_at
+                        ? new Date(file.created_at).toLocaleDateString()
+                        : "--"}
+                    </span>
+                  </RetroTableCell>
+                </RetroTableRow>
+              );
+            })}
+          </RetroTableBody>
+        </RetroTable>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            padding: "0.5rem 0 0",
+            fontSize: "0.7rem",
+            color: "var(--theme-text-muted)",
+            fontFamily: "var(--font-body)",
+          }}
+        >
+          <span>
+            {selected.size} of {files.length} selected
+          </span>
+          <RetroButton variant="ghost" onClick={fetchFiles}>
+            Refresh
+          </RetroButton>
+        </div>
+      </RetroCardContent>
+    </RetroCard>
   );
 }
 

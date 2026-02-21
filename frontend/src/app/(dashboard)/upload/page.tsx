@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { FolderUp, FileText, FileArchive, ChevronDown, ChevronUp } from "lucide-react";
 import { useDirectoryUpload } from "@/hooks/useDirectoryUpload";
@@ -9,9 +9,8 @@ import { api } from "@/lib/api";
 import type {
   UploadResponse,
   UnstructuredUploadResponse,
-  ExtractionResult,
-  ExtractedEntity,
-  PatientInfo,
+  TriggerExtractionResponse,
+  ExtractionProgressResponse,
 } from "@/types/api";
 import { GlowText } from "@/components/retro/GlowText";
 import { RetroCard, RetroCardHeader, RetroCardContent } from "@/components/retro/RetroCard";
@@ -77,20 +76,6 @@ interface UploadResult {
 }
 
 /* ==========================================
-   ENTITY COLORS
-   ========================================== */
-
-const ENTITY_COLORS: Record<string, string> = {
-  medication: "var(--theme-amber)",
-  condition: "var(--theme-ochre)",
-  lab_result: "var(--theme-sage)",
-  vital: "var(--theme-sage)",
-  procedure: "var(--record-procedure-text)",
-  allergy: "var(--theme-terracotta)",
-  provider: "var(--theme-text-dim)",
-};
-
-/* ==========================================
    MAIN UPLOAD PAGE
    ========================================== */
 
@@ -103,23 +88,27 @@ export default function UploadPage() {
   const [uploadResults, setUploadResults] = useState<UploadResult[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
-  // --- Extraction tracking (for unstructured uploads) ---
-  const [activeExtractions, setActiveExtractions] = useState<
-    Array<{ uploadId: string; filename: string; extraction: ExtractionResult | null }>
-  >([]);
-  const [selectedEntities, setSelectedEntities] = useState<Record<string, Set<number>>>({});
-
-  // --- Patient selection for entity confirmation ---
-  const [patients, setPatients] = useState<PatientInfo[]>([]);
-  const [selectedPatient, setSelectedPatient] = useState("");
-  const [confirming, setConfirming] = useState<string | null>(null);
-  const [confirmResults, setConfirmResults] = useState<Record<string, number>>({});
-
   // --- Upload history ---
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState<UploadHistoryItem[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
+
+  // --- Extraction trigger state (for unstructured files from ZIP uploads) ---
+  const [pendingExtractions, setPendingExtractions] = useState<
+    { upload_id: string; filename: string; status: string }[]
+  >([]);
+  const [selectedForExtraction, setSelectedForExtraction] = useState<Set<string>>(
+    new Set()
+  );
+  const [extractionTriggered, setExtractionTriggered] = useState(false);
+  const [extractionStatuses, setExtractionStatuses] = useState<
+    Record<string, string>
+  >({});
+
+  // --- Extraction progress (replaces entity review) ---
+  const [extractionProgress, setExtractionProgress] = useState<ExtractionProgressResponse | null>(null);
+  const progressPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // --- Directory upload (client-side zipping) ---
   const {
@@ -140,19 +129,6 @@ export default function UploadPage() {
     onError: (message) => setUploadError(message),
   });
 
-  // --- Load patients for entity confirmation ---
-  useEffect(() => {
-    (async () => {
-      try {
-        const data = await api.get<{ items: PatientInfo[] }>("/dashboard/patients");
-        setPatients(data.items);
-        if (data.items.length > 0) setSelectedPatient(data.items[0].id);
-      } catch {
-        /* ignore */
-      }
-    })();
-  }, []);
-
   // --- Load history when section is opened ---
   useEffect(() => {
     if (!historyOpen || historyLoaded) return;
@@ -167,44 +143,41 @@ export default function UploadPage() {
       .finally(() => setHistoryLoading(false));
   }, [historyOpen, historyLoaded]);
 
-  // --- Poll for extraction results ---
-  useEffect(() => {
-    const pending = activeExtractions.filter(
-      (e) => e.extraction === null || e.extraction.status === "processing"
-    );
-    if (pending.length === 0) return;
+  // --- Poll for extraction progress ---
+  const startProgressPolling = useCallback(() => {
+    // Clear any existing poll
+    if (progressPollRef.current) clearInterval(progressPollRef.current);
 
-    const interval = setInterval(async () => {
-      for (const entry of pending) {
-        try {
-          const data = await api.get<ExtractionResult>(
-            `/upload/${entry.uploadId}/extraction`
-          );
-          setActiveExtractions((prev) =>
-            prev.map((e) =>
-              e.uploadId === entry.uploadId ? { ...e, extraction: data } : e
-            )
-          );
-          if (
-            data.status === "awaiting_confirmation" ||
-            data.status === "completed" ||
-            data.status === "failed"
-          ) {
-            if (data.entities.length > 0) {
-              setSelectedEntities((prev) => ({
-                ...prev,
-                [entry.uploadId]: new Set(data.entities.map((_, i) => i)),
-              }));
-            }
+    const poll = async () => {
+      try {
+        const data = await api.get<ExtractionProgressResponse>(
+          "/upload/extraction-progress"
+        );
+        setExtractionProgress(data);
+
+        // Stop polling when nothing is processing
+        if (data.processing === 0) {
+          if (progressPollRef.current) {
+            clearInterval(progressPollRef.current);
+            progressPollRef.current = null;
           }
-        } catch {
-          /* continue polling */
         }
+      } catch {
+        /* continue polling */
       }
-    }, 2000);
+    };
 
-    return () => clearInterval(interval);
-  }, [activeExtractions]);
+    // Fetch immediately, then poll
+    poll();
+    progressPollRef.current = setInterval(poll, 2000);
+  }, []);
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (progressPollRef.current) clearInterval(progressPollRef.current);
+    };
+  }, []);
 
   // --- Drop handler ---
   const onDrop = useCallback((acceptedFiles: File[]) => {
@@ -244,8 +217,6 @@ export default function UploadPage() {
     setUploading(true);
     setUploadError(null);
     setUploadResults([]);
-    setActiveExtractions([]);
-    setConfirmResults({});
 
     const results: UploadResult[] = [];
 
@@ -260,6 +231,15 @@ export default function UploadPage() {
         formData.append("file", file);
         const resp = await api.postForm<UploadResponse>("/upload", formData);
         results.push({ type: "structured", filename: file.name, response: resp });
+        if (resp.unstructured_uploads && resp.unstructured_uploads.length > 0) {
+          setPendingExtractions((prev) => {
+            const existing = new Set(prev.map((p) => p.upload_id));
+            const newFiles = resp.unstructured_uploads!.filter(
+              (f) => !existing.has(f.upload_id)
+            );
+            return [...prev, ...newFiles];
+          });
+        }
       } catch (err) {
         results.push({
           type: "structured",
@@ -271,7 +251,6 @@ export default function UploadPage() {
 
     // Upload unstructured files
     if (unstructured.length === 1) {
-      // Single unstructured file
       const file = unstructured[0];
       try {
         const formData = new FormData();
@@ -281,10 +260,6 @@ export default function UploadPage() {
           formData
         );
         results.push({ type: "unstructured", filename: file.name, response: resp });
-        setActiveExtractions((prev) => [
-          ...prev,
-          { uploadId: resp.upload_id, filename: file.name, extraction: null },
-        ]);
       } catch (err) {
         results.push({
           type: "unstructured",
@@ -293,7 +268,6 @@ export default function UploadPage() {
         });
       }
     } else if (unstructured.length > 1) {
-      // Batch unstructured
       try {
         const formData = new FormData();
         for (const file of unstructured) {
@@ -306,10 +280,6 @@ export default function UploadPage() {
           const upload = resp.uploads[i];
           const filename = unstructured[i]?.name || `file-${i}`;
           results.push({ type: "unstructured", filename, response: upload });
-          setActiveExtractions((prev) => [
-            ...prev,
-            { uploadId: upload.upload_id, filename, extraction: null },
-          ]);
         }
       } catch (err) {
         for (const file of unstructured) {
@@ -322,60 +292,87 @@ export default function UploadPage() {
       }
     }
 
+    // Start progress polling if any unstructured files were uploaded
+    if (unstructured.length > 0) {
+      startProgressPolling();
+    }
+
     setUploadResults(results);
     setSelectedFiles([]);
     setUploading(false);
-    // Refresh history on next open
     setHistoryLoaded(false);
-  }, [selectedFiles]);
+  }, [selectedFiles, startProgressPolling]);
 
-  // --- Entity toggle ---
-  const toggleEntity = useCallback((uploadId: string, index: number) => {
-    setSelectedEntities((prev) => {
-      const current = new Set(prev[uploadId] || []);
-      if (current.has(index)) current.delete(index);
-      else current.add(index);
-      return { ...prev, [uploadId]: current };
+  // --- Extraction trigger handlers ---
+  const handleTriggerExtraction = useCallback(async () => {
+    if (selectedForExtraction.size === 0) return;
+    setExtractionTriggered(true);
+
+    const ids = Array.from(selectedForExtraction);
+
+    try {
+      const resp = await api.post<TriggerExtractionResponse>(
+        "/upload/trigger-extraction",
+        { upload_ids: ids }
+      );
+
+      const statuses: Record<string, string> = {};
+      for (const r of resp.results) {
+        statuses[r.upload_id] = r.status;
+      }
+      setExtractionStatuses(statuses);
+
+      // Start polling for progress
+      startProgressPolling();
+    } catch {
+      setExtractionTriggered(false);
+    }
+  }, [selectedForExtraction, startProgressPolling]);
+
+  const handleRetryFailed = useCallback(async () => {
+    try {
+      const resp = await api.get<{
+        files: { id: string; filename: string }[];
+      }>("/upload/pending-extraction?statuses=failed");
+
+      if (resp.files.length === 0) return;
+
+      const ids = resp.files.map((f) => f.id);
+      await api.post<TriggerExtractionResponse>(
+        "/upload/trigger-extraction",
+        { upload_ids: ids }
+      );
+      startProgressPolling();
+    } catch {
+      /* silently fail */
+    }
+  }, [startProgressPolling]);
+
+  const handleDismissExtractionPanel = useCallback(() => {
+    setPendingExtractions([]);
+    setSelectedForExtraction(new Set());
+    setExtractionTriggered(false);
+    setExtractionStatuses({});
+  }, []);
+
+  const toggleExtractionSelection = useCallback((uploadId: string) => {
+    setSelectedForExtraction((prev) => {
+      const next = new Set(prev);
+      if (next.has(uploadId)) next.delete(uploadId);
+      else next.add(uploadId);
+      return next;
     });
   }, []);
 
-  // --- Confirm entities ---
-  const handleConfirm = useCallback(
-    async (uploadId: string, entities: ExtractedEntity[]) => {
-      if (!selectedPatient) return;
-      setConfirming(uploadId);
-
-      try {
-        const selected = selectedEntities[uploadId] || new Set();
-        const confirmed = entities
-          .filter((_, i) => selected.has(i))
-          .map((e) => ({
-            entity_class: e.entity_class,
-            text: e.text,
-            attributes: e.attributes,
-            start_pos: e.start_pos,
-            end_pos: e.end_pos,
-            confidence: e.confidence,
-          }));
-
-        const resp = await api.post<{ records_created: number }>(
-          `/upload/${uploadId}/confirm-extraction`,
-          { confirmed_entities: confirmed, patient_id: selectedPatient }
-        );
-        setConfirmResults((prev) => ({
-          ...prev,
-          [uploadId]: resp.records_created,
-        }));
-      } catch (err) {
-        setUploadError(
-          err instanceof Error ? err.message : "Confirmation failed"
-        );
-      } finally {
-        setConfirming(null);
-      }
-    },
-    [selectedPatient, selectedEntities]
-  );
+  const toggleSelectAllExtraction = useCallback(() => {
+    if (selectedForExtraction.size === pendingExtractions.length) {
+      setSelectedForExtraction(new Set());
+    } else {
+      setSelectedForExtraction(
+        new Set(pendingExtractions.map((p) => p.upload_id))
+      );
+    }
+  }, [pendingExtractions, selectedForExtraction]);
 
   // --- Directory drop handler (intercepts before react-dropzone) ---
   const handleDropCapture = useCallback(
@@ -383,12 +380,10 @@ export default function UploadPage() {
       if (!e.dataTransfer) return;
       const result = await getFilesFromDrop(e.dataTransfer);
       if (result) {
-        // Directory was dropped — prevent react-dropzone from processing
         e.stopPropagation();
         e.preventDefault();
         createZipFromFiles(result.files, result.folderName);
       }
-      // If result is null, individual files were dropped — let react-dropzone handle it
     },
     [createZipFromFiles]
   );
@@ -396,6 +391,15 @@ export default function UploadPage() {
   // --- Derived counts ---
   const structuredCount = selectedFiles.filter(isStructured).length;
   const unstructuredCount = selectedFiles.filter(isUnstructured).length;
+
+  // --- Progress bar helpers ---
+  const progressPercent = extractionProgress && extractionProgress.total > 0
+    ? Math.round(((extractionProgress.completed + extractionProgress.failed) / extractionProgress.total) * 100)
+    : 0;
+  const showProgress = extractionProgress && extractionProgress.total > 0 && (
+    extractionProgress.processing > 0 || extractionTriggered
+  );
+  const allDone = extractionProgress && extractionProgress.processing === 0 && extractionProgress.total > 0;
 
   // --- Render ---
   return (
@@ -467,7 +471,6 @@ export default function UploadPage() {
               variant="ghost"
               onClick={(e) => {
                 e.stopPropagation();
-                // Trigger the dropzone file picker
                 const input = document.querySelector(
                   'input[type="file"]:not([webkitdirectory])'
                 ) as HTMLInputElement | null;
@@ -487,7 +490,6 @@ export default function UploadPage() {
               <FileArchive size={14} style={{ marginRight: "0.5rem" }} />
               Select Folder
             </RetroButton>
-            {/* Hidden folder input */}
             <input
               ref={folderInputRef}
               type="file"
@@ -871,286 +873,336 @@ export default function UploadPage() {
       )}
 
       {/* ==========================================
-          ENTITY REVIEW PANELS (for each unstructured extraction)
+          EXTRACTION PROGRESS BAR
           ========================================== */}
-      {activeExtractions.map((entry) => {
-        const ext = entry.extraction;
-
-        // Still processing
-        if (!ext || ext.status === "processing") {
-          return (
-            <RetroCard key={entry.uploadId}>
-              <RetroCardContent>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-                  <span
-                    className="animate-pulse"
-                    style={{
-                      fontFamily: "VT323, monospace",
-                      fontSize: "1rem",
-                      color: "var(--theme-amber)",
-                    }}
-                  >
-                    Extracting entities from {entry.filename}...
-                  </span>
-                </div>
-              </RetroCardContent>
-            </RetroCard>
-          );
-        }
-
-        // Confirmed
-        if (confirmResults[entry.uploadId] !== undefined) {
-          return (
-            <RetroCard key={entry.uploadId} accentTop>
-              <RetroCardHeader>
-                <GlowText as="h4" glow={false}>
-                  Extraction confirmed &mdash; {entry.filename}
-                </GlowText>
-              </RetroCardHeader>
-              <RetroCardContent>
-                <p
+      {showProgress && extractionProgress && (
+        <RetroCard accentTop>
+          <RetroCardHeader>
+            <GlowText as="h4" glow={false}>
+              {extractionProgress.processing > 0
+                ? "Extracting clinical entities..."
+                : "Extraction complete"}
+            </GlowText>
+          </RetroCardHeader>
+          <RetroCardContent>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+              {/* Progress text */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span
                   style={{
-                    fontSize: "0.85rem",
+                    fontFamily: "VT323, monospace",
+                    fontSize: "1.1rem",
+                    color: extractionProgress.processing > 0
+                      ? "var(--theme-amber)"
+                      : "var(--theme-sage)",
+                  }}
+                  className={extractionProgress.processing > 0 ? "animate-pulse" : ""}
+                >
+                  {extractionProgress.completed + extractionProgress.failed} of {extractionProgress.total} files processed
+                </span>
+                <span
+                  style={{
+                    fontFamily: "VT323, monospace",
+                    fontSize: "1rem",
                     color: "var(--theme-sage)",
-                    fontFamily: "var(--font-body)",
                   }}
                 >
-                  {confirmResults[entry.uploadId]} health records created.
-                </p>
-              </RetroCardContent>
-            </RetroCard>
-          );
-        }
+                  {extractionProgress.records_created} records created
+                </span>
+              </div>
 
-        // Failed
-        if (ext.status === "failed" || ext.error) {
-          return (
-            <RetroCard key={entry.uploadId}>
-              <RetroCardContent>
-                <div style={{ display: "flex", alignItems: "flex-start", gap: "0.75rem" }}>
+              {/* Progress bar */}
+              <div
+                style={{
+                  height: "8px",
+                  backgroundColor: "var(--theme-bg-deep)",
+                  borderRadius: "4px",
+                  overflow: "hidden",
+                }}
+              >
+                <div
+                  style={{
+                    height: "100%",
+                    width: `${progressPercent}%`,
+                    backgroundColor: allDone && extractionProgress.failed === 0
+                      ? "var(--theme-sage)"
+                      : "var(--theme-amber)",
+                    borderRadius: "4px",
+                    transition: "width 0.3s ease",
+                  }}
+                />
+              </div>
+
+              {/* Status breakdown */}
+              <div
+                style={{
+                  display: "flex",
+                  gap: "1rem",
+                  flexWrap: "wrap",
+                }}
+              >
+                {extractionProgress.completed > 0 && (
                   <span
                     style={{
                       fontSize: "0.7rem",
-                      fontWeight: 700,
+                      fontFamily: "var(--font-body)",
+                      fontWeight: 600,
+                      padding: "0.15rem 0.5rem",
+                      borderRadius: "4px",
+                      backgroundColor: "var(--theme-sage)",
+                      color: "var(--theme-bg-deep)",
+                    }}
+                  >
+                    {extractionProgress.completed} completed
+                  </span>
+                )}
+                {extractionProgress.processing > 0 && (
+                  <span
+                    style={{
+                      fontSize: "0.7rem",
+                      fontFamily: "var(--font-body)",
+                      fontWeight: 600,
+                      padding: "0.15rem 0.5rem",
+                      borderRadius: "4px",
+                      backgroundColor: "var(--theme-amber)",
+                      color: "var(--theme-bg-deep)",
+                    }}
+                  >
+                    {extractionProgress.processing} processing
+                  </span>
+                )}
+                {extractionProgress.failed > 0 && (
+                  <span
+                    style={{
+                      fontSize: "0.7rem",
+                      fontFamily: "var(--font-body)",
+                      fontWeight: 600,
                       padding: "0.15rem 0.5rem",
                       borderRadius: "4px",
                       backgroundColor: "var(--theme-terracotta)",
-                      color: "var(--theme-text)",
-                      flexShrink: 0,
-                      fontFamily: "var(--font-body)",
+                      color: "var(--theme-bg-deep)",
                     }}
                   >
-                    ERROR
+                    {extractionProgress.failed} failed
                   </span>
-                  <p
-                    style={{
-                      fontSize: "0.8rem",
-                      color: "var(--theme-text-dim)",
-                      fontFamily: "var(--font-body)",
-                    }}
-                  >
-                    {ext.error || "Extraction failed"} ({entry.filename})
-                  </p>
-                </div>
-              </RetroCardContent>
-            </RetroCard>
-          );
-        }
-
-        // Awaiting confirmation with entities
-        if (
-          ext.status === "awaiting_confirmation" &&
-          ext.entities.length > 0
-        ) {
-          const entitiesSelected = selectedEntities[entry.uploadId] || new Set();
-          return (
-            <RetroCard key={entry.uploadId} accentTop>
-              <RetroCardHeader>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                  }}
-                >
-                  <GlowText as="h4" glow={false}>
-                    Review &mdash; {entry.filename}
-                  </GlowText>
+                )}
+                {extractionProgress.pending > 0 && (
                   <span
                     style={{
-                      fontSize: "0.75rem",
-                      color: "var(--theme-text-dim)",
+                      fontSize: "0.7rem",
                       fontFamily: "var(--font-body)",
+                      fontWeight: 600,
+                      padding: "0.15rem 0.5rem",
+                      borderRadius: "4px",
+                      backgroundColor: "var(--theme-text-muted)",
+                      color: "var(--theme-bg-deep)",
                     }}
                   >
-                    {ext.entities.length} entities found
+                    {extractionProgress.pending} pending
                   </span>
+                )}
+              </div>
+
+              {/* Retry button when there are failed files and nothing processing */}
+              {allDone && extractionProgress.failed > 0 && (
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.5rem" }}>
+                  <RetroButton
+                    variant="ghost"
+                    onClick={() => {
+                      setExtractionProgress(null);
+                      setExtractionTriggered(false);
+                    }}
+                  >
+                    Dismiss
+                  </RetroButton>
+                  <RetroButton onClick={handleRetryFailed}>
+                    Retry {extractionProgress.failed} Failed
+                  </RetroButton>
                 </div>
-              </RetroCardHeader>
-              <RetroCardContent>
-                <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-                  {/* Extracted text preview */}
-                  {ext.extracted_text_preview && (
-                    <div
-                      style={{
-                        padding: "0.75rem",
-                        backgroundColor: "var(--theme-bg-deep)",
-                        borderRadius: "4px",
-                        maxHeight: "100px",
-                        overflowY: "auto",
-                      }}
-                    >
-                      <p
-                        style={{
-                          fontFamily: "VT323, monospace",
-                          fontSize: "0.85rem",
-                          color: "var(--theme-text-dim)",
-                          whiteSpace: "pre-wrap",
-                        }}
-                      >
-                        {ext.extracted_text_preview}
-                      </p>
-                    </div>
-                  )}
+              )}
 
-                  {/* Patient selector */}
-                  <div>
-                    <label
-                      style={{
-                        display: "block",
-                        fontSize: "0.75rem",
-                        fontWeight: 600,
-                        marginBottom: "0.35rem",
-                        color: "var(--theme-text-dim)",
-                        fontFamily: "var(--font-body)",
-                      }}
-                    >
-                      Assign to patient
-                    </label>
-                    <select
-                      value={selectedPatient}
-                      onChange={(e) => setSelectedPatient(e.target.value)}
-                      style={{
-                        width: "100%",
-                        padding: "0.4rem 0.75rem",
-                        fontSize: "0.8rem",
-                        border: "1px solid var(--theme-border)",
-                        backgroundColor: "var(--theme-bg-deep)",
-                        color: "var(--theme-text)",
-                        fontFamily: "VT323, monospace",
-                        borderRadius: "4px",
-                      }}
-                    >
-                      {patients.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.fhir_id || p.id.slice(0, 8)} ({p.gender || "unknown"})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Entity table */}
-                  <div style={{ overflowX: "auto", maxHeight: "320px", overflowY: "auto" }}>
-                    <RetroTable>
-                      <RetroTableHeader>
-                        <RetroTableHead className="w-10"> </RetroTableHead>
-                        <RetroTableHead>Type</RetroTableHead>
-                        <RetroTableHead>Text</RetroTableHead>
-                        <RetroTableHead>Details</RetroTableHead>
-                        <RetroTableHead className="w-16">Conf</RetroTableHead>
-                      </RetroTableHeader>
-                      <RetroTableBody>
-                        {ext.entities.map((entity, i) => (
-                          <RetroTableRow key={i}>
-                            <RetroTableCell>
-                              <input
-                                type="checkbox"
-                                checked={entitiesSelected.has(i)}
-                                onChange={() => toggleEntity(entry.uploadId, i)}
-                                className="accent-amber-500"
-                              />
-                            </RetroTableCell>
-                            <RetroTableCell>
-                              <span
-                                style={{
-                                  fontSize: "0.7rem",
-                                  fontWeight: 600,
-                                  color:
-                                    ENTITY_COLORS[entity.entity_class] ||
-                                    "var(--theme-text-dim)",
-                                  fontFamily: "var(--font-body)",
-                                }}
-                              >
-                                {entity.entity_class.replace("_", " ")}
-                              </span>
-                            </RetroTableCell>
-                            <RetroTableCell>
-                              <span
-                                style={{
-                                  fontSize: "0.75rem",
-                                  color: "var(--theme-text)",
-                                  fontFamily: "var(--font-body)",
-                                }}
-                              >
-                                {entity.text}
-                              </span>
-                            </RetroTableCell>
-                            <RetroTableCell>
-                              <span
-                                style={{
-                                  fontSize: "0.7rem",
-                                  color: "var(--theme-text-muted)",
-                                  fontFamily: "var(--font-body)",
-                                }}
-                              >
-                                {Object.entries(entity.attributes)
-                                  .filter(([k]) => k !== "medication_group")
-                                  .map(([k, v]) => `${k}: ${v}`)
-                                  .join(", ")
-                                  .slice(0, 60)}
-                              </span>
-                            </RetroTableCell>
-                            <RetroTableCell>
-                              <span
-                                style={{
-                                  fontSize: "0.7rem",
-                                  fontFamily: "VT323, monospace",
-                                  color:
-                                    entity.confidence >= 0.8
-                                      ? "var(--theme-sage)"
-                                      : "var(--theme-ochre)",
-                                }}
-                              >
-                                {(entity.confidence * 100).toFixed(0)}%
-                              </span>
-                            </RetroTableCell>
-                          </RetroTableRow>
-                        ))}
-                      </RetroTableBody>
-                    </RetroTable>
-                  </div>
-
-                  {/* Confirm button */}
-                  <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                    <RetroButton
-                      onClick={() => handleConfirm(entry.uploadId, ext.entities)}
-                      disabled={
-                        confirming === entry.uploadId || entitiesSelected.size === 0
-                      }
-                    >
-                      {confirming === entry.uploadId
-                        ? "Saving..."
-                        : `Confirm ${entitiesSelected.size} entities`}
-                    </RetroButton>
-                  </div>
+              {/* Dismiss when all done with no failures */}
+              {allDone && extractionProgress.failed === 0 && (
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <RetroButton
+                    variant="ghost"
+                    onClick={() => {
+                      setExtractionProgress(null);
+                      setExtractionTriggered(false);
+                    }}
+                  >
+                    Dismiss
+                  </RetroButton>
                 </div>
-              </RetroCardContent>
-            </RetroCard>
-          );
-        }
+              )}
+            </div>
+          </RetroCardContent>
+        </RetroCard>
+      )}
 
-        return null;
-      })}
+      {/* ==========================================
+          EXTRACTION TRIGGER PANEL
+          ========================================== */}
+      {pendingExtractions.length > 0 && (
+        <RetroCard>
+          <RetroCardHeader>
+            <GlowText as="h3" className="text-base">
+              {pendingExtractions.length} Unstructured File
+              {pendingExtractions.length !== 1 ? "s" : ""} Detected
+            </GlowText>
+            <p
+              style={{
+                fontSize: "0.7rem",
+                color: "var(--theme-text-muted)",
+                fontFamily: "var(--font-body)",
+                marginTop: "0.25rem",
+              }}
+            >
+              Text extraction required for clinical entity recognition
+            </p>
+          </RetroCardHeader>
+          <RetroCardContent>
+            <RetroTable>
+              <RetroTableHeader>
+                <RetroTableHead className="w-8">
+                  <input
+                    type="checkbox"
+                    checked={
+                      selectedForExtraction.size === pendingExtractions.length &&
+                      pendingExtractions.length > 0
+                    }
+                    onChange={toggleSelectAllExtraction}
+                    disabled={extractionTriggered}
+                    style={{ accentColor: "var(--theme-amber)" }}
+                  />
+                </RetroTableHead>
+                <RetroTableHead>File</RetroTableHead>
+                <RetroTableHead>Type</RetroTableHead>
+                <RetroTableHead>Status</RetroTableHead>
+              </RetroTableHeader>
+              <RetroTableBody>
+                {pendingExtractions.map((file) => {
+                  const ext = file.filename.split(".").pop()?.toLowerCase() || "";
+                  const badgeColor =
+                    ext === "pdf"
+                      ? "var(--theme-terracotta)"
+                      : ext === "rtf"
+                        ? "var(--theme-sage)"
+                        : "var(--theme-ochre)";
+                  const currentStatus =
+                    extractionStatuses[file.upload_id] || file.status;
+                  return (
+                    <RetroTableRow key={file.upload_id}>
+                      <RetroTableCell>
+                        <input
+                          type="checkbox"
+                          checked={selectedForExtraction.has(file.upload_id)}
+                          onChange={() => toggleExtractionSelection(file.upload_id)}
+                          disabled={extractionTriggered}
+                          style={{ accentColor: "var(--theme-amber)" }}
+                        />
+                      </RetroTableCell>
+                      <RetroTableCell>
+                        <span
+                          style={{
+                            fontSize: "0.75rem",
+                            fontFamily: "var(--font-body)",
+                            color: "var(--theme-text)",
+                            maxWidth: "250px",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                            display: "inline-block",
+                          }}
+                        >
+                          {file.filename}
+                        </span>
+                      </RetroTableCell>
+                      <RetroTableCell>
+                        <span
+                          style={{
+                            fontSize: "0.6rem",
+                            fontWeight: 700,
+                            padding: "0.1rem 0.4rem",
+                            borderRadius: "3px",
+                            backgroundColor: badgeColor,
+                            color: "var(--theme-bg-deep)",
+                            fontFamily: "var(--font-body)",
+                            textTransform: "uppercase",
+                          }}
+                        >
+                          {ext}
+                        </span>
+                      </RetroTableCell>
+                      <RetroTableCell>
+                        <span
+                          style={{
+                            fontSize: "0.65rem",
+                            fontWeight: 600,
+                            padding: "0.15rem 0.5rem",
+                            borderRadius: "4px",
+                            fontFamily: "var(--font-body)",
+                            backgroundColor:
+                              currentStatus === "processing"
+                                ? "var(--theme-amber)"
+                                : currentStatus === "completed"
+                                  ? "var(--theme-sage)"
+                                  : currentStatus === "failed"
+                                    ? "var(--theme-terracotta)"
+                                    : "var(--theme-text-muted)",
+                            color: "var(--theme-bg-deep)",
+                          }}
+                        >
+                          {currentStatus}
+                        </span>
+                      </RetroTableCell>
+                    </RetroTableRow>
+                  );
+                })}
+              </RetroTableBody>
+            </RetroTable>
+
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "0.75rem 0 0",
+                borderTop: "1px solid var(--theme-border)",
+                marginTop: "0.5rem",
+              }}
+            >
+              <span
+                style={{
+                  fontSize: "0.7rem",
+                  color: "var(--theme-text-muted)",
+                  fontFamily: "var(--font-body)",
+                }}
+              >
+                {selectedForExtraction.size} of {pendingExtractions.length} selected
+              </span>
+              <div style={{ display: "flex", gap: "0.5rem" }}>
+                <RetroButton
+                  variant="ghost"
+                  onClick={handleDismissExtractionPanel}
+                >
+                  Do Later
+                </RetroButton>
+                <RetroButton
+                  onClick={handleTriggerExtraction}
+                  disabled={
+                    selectedForExtraction.size === 0 || extractionTriggered
+                  }
+                >
+                  {extractionTriggered
+                    ? "Extracting..."
+                    : `Extract ${selectedForExtraction.size} File${selectedForExtraction.size !== 1 ? "s" : ""}`}
+                </RetroButton>
+              </div>
+            </div>
+          </RetroCardContent>
+        </RetroCard>
+      )}
 
       {/* ==========================================
           UPLOAD HISTORY (COLLAPSIBLE)
@@ -1206,6 +1258,7 @@ export default function UploadPage() {
                   <RetroTableHead>Source</RetroTableHead>
                   <RetroTableHead>Records</RetroTableHead>
                   <RetroTableHead>Status</RetroTableHead>
+                  <RetroTableHead>Actions</RetroTableHead>
                 </RetroTableHeader>
                 <RetroTableBody>
                   {history.map((upload) => (
@@ -1268,12 +1321,39 @@ export default function UploadPage() {
                                     : upload.ingestion_status ===
                                         "awaiting_confirmation"
                                       ? "var(--record-procedure-text)"
-                                      : "var(--theme-text-muted)",
+                                      : upload.ingestion_status ===
+                                          "pending_extraction"
+                                        ? "var(--theme-ochre)"
+                                        : "var(--theme-text-muted)",
                             color: "var(--theme-bg-deep)",
                           }}
                         >
                           {upload.ingestion_status}
                         </span>
+                      </RetroTableCell>
+                      <RetroTableCell>
+                        {(upload.ingestion_status === "pending_extraction" ||
+                          upload.ingestion_status === "failed" ||
+                          upload.ingestion_status === "processing") && (
+                          <RetroButton
+                            variant="ghost"
+                            onClick={async (e: React.MouseEvent) => {
+                              e.stopPropagation();
+                              try {
+                                await api.post<TriggerExtractionResponse>(
+                                  "/upload/trigger-extraction",
+                                  { upload_ids: [upload.id] }
+                                );
+                                setHistoryLoaded(false);
+                              } catch {
+                                // Silently fail
+                              }
+                            }}
+                            style={{ fontSize: "0.65rem", padding: "0.15rem 0.4rem" }}
+                          >
+                            {upload.ingestion_status === "failed" ? "Retry" : "Extract"}
+                          </RetroButton>
+                        )}
                       </RetroTableCell>
                     </RetroTableRow>
                   ))}

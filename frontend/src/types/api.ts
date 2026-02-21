@@ -88,6 +88,36 @@ export interface UploadResponse {
   status: string;
   records_inserted: number;
   errors: unknown[];
+  unstructured_uploads?: { upload_id: string; filename: string; status: string }[];
+}
+
+export interface PendingExtractionFile {
+  id: string;
+  filename: string;
+  mime_type: string;
+  file_category: string;
+  file_size_bytes: number | null;
+  created_at: string | null;
+}
+
+export interface TriggerExtractionResponse {
+  triggered: number;
+  failed: number;
+  results: { upload_id: string; status: string }[];
+}
+
+export interface PendingExtractionResponse {
+  files: PendingExtractionFile[];
+  total: number;
+}
+
+export interface ExtractionProgressResponse {
+  total: number;
+  completed: number;
+  processing: number;
+  failed: number;
+  pending: number;
+  records_created: number;
 }
 
 export interface LabItem {

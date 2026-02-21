@@ -17,12 +17,71 @@ from app.config import settings
 # Global semaphore to limit concurrent Gemini API calls across all uploads
 _gemini_semaphore: asyncio.Semaphore | None = None
 
+# Extraction semaphore to limit concurrent file extractions (layer above Gemini semaphore)
+_extraction_semaphore: asyncio.Semaphore | None = None
+
+# Queue-based extraction worker state
+_extraction_queue: asyncio.Queue | None = None
+_worker_task: asyncio.Task | None = None
+
 
 def _get_gemini_semaphore() -> asyncio.Semaphore:
     global _gemini_semaphore
     if _gemini_semaphore is None:
         _gemini_semaphore = asyncio.Semaphore(settings.gemini_concurrency_limit)
     return _gemini_semaphore
+
+
+def _get_extraction_semaphore() -> asyncio.Semaphore:
+    global _extraction_semaphore
+    if _extraction_semaphore is None:
+        _extraction_semaphore = asyncio.Semaphore(5)
+    return _extraction_semaphore
+
+
+def _get_extraction_queue() -> asyncio.Queue:
+    global _extraction_queue
+    if _extraction_queue is None:
+        _extraction_queue = asyncio.Queue()
+    return _extraction_queue
+
+
+async def _process_and_release(
+    sem: asyncio.Semaphore, upload_id: UUID, file_path: Path, user_id: UUID
+) -> None:
+    """Process one file then release the semaphore."""
+    try:
+        await _process_unstructured(upload_id, file_path, user_id)
+    finally:
+        sem.release()
+
+
+async def _extraction_worker() -> None:
+    """Background worker: pull files from queue, process with concurrency limit.
+
+    Only creates tasks when a semaphore slot is available, preventing
+    event loop starvation when many files are queued.
+    """
+    queue = _get_extraction_queue()
+    sem = _get_extraction_semaphore()
+    active: set[asyncio.Task] = set()
+
+    while True:
+        upload_id, file_path, user_id = await queue.get()
+        await sem.acquire()
+        task = asyncio.create_task(
+            _process_and_release(sem, upload_id, file_path, user_id)
+        )
+        active.add(task)
+        task.add_done_callback(active.discard)
+        queue.task_done()
+
+
+def _ensure_worker_running() -> None:
+    """Start the extraction worker if it's not already running."""
+    global _worker_task
+    if _worker_task is None or _worker_task.done():
+        _worker_task = asyncio.create_task(_extraction_worker())
 
 from app.database import get_db
 from app.dependencies import get_authenticated_user_id
@@ -34,6 +93,7 @@ from app.schemas.upload import (
     ConfirmExtractionRequest,
     ExtractedEntitySchema,
     ExtractionResultResponse,
+    PendingExtractionFile,
     UnstructuredUploadResponse,
     UploadHistoryResponse,
     UploadResponse,
@@ -128,6 +188,7 @@ async def upload_file(
         status=result["status"],
         records_inserted=result["records_inserted"],
         errors=result.get("errors", []),
+        unstructured_uploads=result.get("unstructured_uploads", []),
     )
 
 
@@ -172,6 +233,158 @@ async def upload_epic_export(
         records_inserted=result["records_inserted"],
         errors=result.get("errors", []),
     )
+
+
+@router.get("/pending-extraction")
+async def get_pending_extractions(
+    statuses: str | None = None,
+    user_id: UUID = Depends(get_authenticated_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """List files by extraction status for this user.
+
+    Args:
+        statuses: Comma-separated list of statuses to filter by.
+                  Defaults to 'pending_extraction'.
+    """
+    status_list = [s.strip() for s in statuses.split(",")] if statuses else ["pending_extraction"]
+
+    result = await db.execute(
+        select(UploadedFile)
+        .where(UploadedFile.user_id == user_id)
+        .where(UploadedFile.ingestion_status.in_(status_list))
+        .order_by(UploadedFile.created_at.desc())
+    )
+    files = result.scalars().all()
+
+    await log_audit_event(
+        db,
+        user_id=user_id,
+        action="upload.pending_extraction.list",
+        resource_type="uploaded_file",
+        resource_id=None,
+        details={"count": len(files), "statuses": status_list},
+    )
+
+    return {
+        "files": [
+            PendingExtractionFile(
+                id=str(f.id),
+                filename=f.filename,
+                mime_type=f.mime_type,
+                file_category=f.file_category,
+                file_size_bytes=f.file_size_bytes,
+                created_at=f.created_at.isoformat() if f.created_at else None,
+                ingestion_status=f.ingestion_status,
+            ).model_dump()
+            for f in files
+        ],
+        "total": len(files),
+    }
+
+
+@router.get("/extraction-progress")
+async def extraction_progress(
+    user_id: UUID = Depends(get_authenticated_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Get extraction progress counts for the user's unstructured files."""
+    from sqlalchemy import func, case
+
+    result = await db.execute(
+        select(
+            func.count().label("total"),
+            func.count().filter(UploadedFile.ingestion_status == "completed").label("completed"),
+            func.count().filter(UploadedFile.ingestion_status == "processing").label("processing"),
+            func.count().filter(UploadedFile.ingestion_status == "failed").label("failed"),
+            func.count().filter(UploadedFile.ingestion_status == "pending_extraction").label("pending"),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (UploadedFile.ingestion_status == "completed", UploadedFile.record_count),
+                        else_=0,
+                    )
+                ),
+                0,
+            ).label("records_created"),
+        )
+        .where(UploadedFile.user_id == user_id)
+        .where(UploadedFile.file_category == "unstructured")
+    )
+    row = result.one()
+
+    return {
+        "total": row.total,
+        "completed": row.completed,
+        "processing": row.processing,
+        "failed": row.failed,
+        "pending": row.pending,
+        "records_created": row.records_created,
+    }
+
+
+@router.post("/trigger-extraction")
+async def trigger_extraction(
+    body: dict,
+    user_id: UUID = Depends(get_authenticated_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Trigger text+entity extraction for pending unstructured files."""
+    from app.schemas.upload import TriggerExtractionRequest
+
+    req = TriggerExtractionRequest(**body)
+    upload_ids = [UUID(uid) for uid in req.upload_ids]
+
+    # Bulk fetch only uploads owned by this user (HIPAA: row-level security)
+    result = await db.execute(
+        select(UploadedFile).where(
+            UploadedFile.id.in_(upload_ids),
+            UploadedFile.user_id == user_id,
+        )
+    )
+    uploads = {u.id: u for u in result.scalars().all()}
+
+    triggered = []
+    failed = []
+
+    for uid in upload_ids:
+        upload = uploads.get(uid)
+        if not upload:
+            failed.append({"upload_id": str(uid), "status": "not_found"})
+            continue
+        if upload.ingestion_status not in ("pending_extraction", "processing", "failed", "awaiting_confirmation"):
+            failed.append({"upload_id": str(uid), "status": upload.ingestion_status})
+            continue
+
+        upload.ingestion_status = "processing"
+        triggered.append(upload)
+
+    if triggered:
+        await db.commit()
+
+    # Enqueue files for the background worker (processes up to 5 concurrently,
+    # without creating N idle coroutines that exhaust the DB connection pool)
+    queue = _get_extraction_queue()
+    _ensure_worker_running()
+    for upload in triggered:
+        await queue.put((upload.id, Path(upload.storage_path), user_id))
+
+    await log_audit_event(
+        db,
+        user_id=user_id,
+        action="upload.trigger_extraction",
+        resource_type="uploaded_file",
+        resource_id=None,
+        details={"triggered": len(triggered), "failed": len(failed)},
+    )
+
+    return {
+        "triggered": len(triggered),
+        "failed": len(failed),
+        "results": [
+            {"upload_id": str(u.id), "status": "processing"} for u in triggered
+        ] + failed,
+    }
 
 
 @router.get("/{upload_id}/status", response_model=UploadStatusResponse)
@@ -293,8 +506,8 @@ async def _process_unstructured(upload_id: UUID, file_path: Path, user_id: UUID)
 
             if extraction.error:
                 upload.ingestion_status = "failed"
-                # M2: Sanitize entity extraction error
-                upload.ingestion_errors = [{"error": "Entity extraction failed. Please retry or contact support."}]
+                # M2: Sanitize entity extraction error (include error_type for debugging)
+                upload.ingestion_errors = [{"error": "Entity extraction failed. Please retry or contact support.", "error_type": "EntityExtractionError"}]
             else:
                 entities_json = [
                     {
@@ -308,7 +521,46 @@ async def _process_unstructured(upload_id: UUID, file_path: Path, user_id: UUID)
                     for e in extraction.entities
                 ]
                 upload.extraction_entities = entities_json
-                upload.ingestion_status = "awaiting_confirmation"
+
+                # Auto-confirm: look up user's first patient and create records
+                from app.models.patient import Patient
+                from app.services.extraction.entity_extractor import ExtractedEntity
+                from app.services.extraction.entity_to_fhir import entity_to_health_record_dict
+
+                patient_result = await db.execute(
+                    select(Patient)
+                    .where(Patient.user_id == user_id)
+                    .limit(1)
+                )
+                patient = patient_result.scalar_one_or_none()
+
+                if patient:
+                    created_count = 0
+                    for entity_data in entities_json:
+                        entity = ExtractedEntity(
+                            entity_class=entity_data["entity_class"],
+                            text=entity_data["text"],
+                            attributes=entity_data["attributes"],
+                            start_pos=entity_data.get("start_pos"),
+                            end_pos=entity_data.get("end_pos"),
+                            confidence=entity_data.get("confidence", 0.8),
+                        )
+                        record_dict = entity_to_health_record_dict(
+                            entity=entity,
+                            user_id=user_id,
+                            patient_id=patient.id,
+                            source_file_id=upload_id,
+                        )
+                        if record_dict is not None:
+                            health_record = HealthRecord(**record_dict)
+                            db.add(health_record)
+                            created_count += 1
+
+                    upload.ingestion_status = "completed"
+                    upload.record_count = created_count
+                else:
+                    # No patient found — fall back to manual confirmation
+                    upload.ingestion_status = "awaiting_confirmation"
 
             upload.processing_completed_at = datetime.now(timezone.utc)
             await db.commit()
@@ -318,7 +570,7 @@ async def _process_unstructured(upload_id: UUID, file_path: Path, user_id: UUID)
             logger.error("Unstructured processing failed for %s: %s", upload_id, e, exc_info=True)
             error_type = type(e).__name__
             upload.ingestion_status = "failed"
-            upload.ingestion_errors = [{"error": f"Processing failed: {error_type}. Contact support if this persists."}]
+            upload.ingestion_errors = [{"error": f"Processing failed: {error_type}. Contact support if this persists.", "error_type": error_type}]
             upload.processing_completed_at = datetime.now(timezone.utc)
             await db.commit()
 

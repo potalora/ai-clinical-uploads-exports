@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 
 import langextract as lx
@@ -37,6 +38,12 @@ class ExtractionResult:
     error: str | None = None
 
 
+MAX_RETRIES = 3
+BACKOFF_BASE = 2  # seconds
+
+_TRANSIENT_ERROR_KEYWORDS = ("429", "resource_exhausted", "quota", "rate", "timeout", "connection")
+
+
 def extract_entities(text: str, source_file: str, api_key: str) -> ExtractionResult:
     """Extract clinical entities from text using LangExtract.
 
@@ -44,15 +51,30 @@ def extract_entities(text: str, source_file: str, api_key: str) -> ExtractionRes
     Use extract_entities_async() from async callers.
     """
     try:
-        result = lx.extract(
-            text_or_documents=text,
-            prompt_description=CLINICAL_EXTRACTION_PROMPT,
-            examples=CLINICAL_EXAMPLES,
-            model_id=settings.gemini_extraction_model,
-            api_key=api_key,
-            max_char_buffer=2000,
-            max_workers=4,
-        )
+        for attempt in range(MAX_RETRIES):
+            try:
+                result = lx.extract(
+                    text_or_documents=text,
+                    prompt_description=CLINICAL_EXTRACTION_PROMPT,
+                    examples=CLINICAL_EXAMPLES,
+                    model_id=settings.gemini_extraction_model,
+                    api_key=api_key,
+                    max_char_buffer=2000,
+                    max_workers=1,
+                )
+                break
+            except Exception as e:
+                error_str = str(e).lower()
+                is_transient = any(k in error_str for k in _TRANSIENT_ERROR_KEYWORDS)
+                if is_transient and attempt < MAX_RETRIES - 1:
+                    wait = BACKOFF_BASE ** (attempt + 1)
+                    logger.warning(
+                        "Transient error on attempt %d for %s, retrying in %ds: %s",
+                        attempt + 1, source_file, wait, e,
+                    )
+                    time.sleep(wait)
+                    continue
+                raise
 
         entities = []
         for extraction in result.extractions:
