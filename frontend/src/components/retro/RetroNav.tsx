@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
-import { Sun, Moon, Upload, Sparkles } from "lucide-react";
+import { Sun, Moon, Upload, Sparkles, Clock, Shield } from "lucide-react";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -18,10 +18,10 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { label: "Home", href: "/" },
-  { label: "Timeline", href: "/timeline" },
-  { label: "Upload", href: "/upload", icon: Upload, separator: true },
+  { label: "Home", href: "/", separator: false },
+  { label: "Timeline", href: "/timeline", icon: Clock, separator: true },
   { label: "Summarize", href: "/summaries", icon: Sparkles },
+  { label: "Upload", href: "/upload", icon: Upload },
   { label: "Admin", href: "/admin", separator: true },
 ];
 
