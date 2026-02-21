@@ -129,6 +129,7 @@ async def upload_file(
         status=result["status"],
         records_inserted=result["records_inserted"],
         errors=result.get("errors", []),
+        unstructured_uploads=result.get("unstructured_uploads", []),
     )
 
 

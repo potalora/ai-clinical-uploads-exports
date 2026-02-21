@@ -145,6 +145,38 @@ async def test_upload_history(client: AsyncClient, db_session: AsyncSession):
 
 
 @pytest.mark.asyncio
+async def test_zip_upload_returns_unstructured_uploads(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """Uploading a ZIP with unstructured files returns them in unstructured_uploads."""
+    headers, user_id = await auth_headers(client)
+
+    import zipfile
+    from io import BytesIO
+
+    buf = BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        # Add a minimal PDF (magic bytes)
+        zf.writestr("doc.pdf", b"%PDF-1.4 minimal test content")
+    buf.seek(0)
+
+    resp = await client.post(
+        "/api/v1/upload",
+        files={"file": ("mixed.zip", buf, "application/zip")},
+        headers=headers,
+    )
+    assert resp.status_code == 202
+    data = resp.json()
+    assert "unstructured_uploads" in data
+    assert len(data["unstructured_uploads"]) >= 1
+    # Check structure of each entry
+    entry = data["unstructured_uploads"][0]
+    assert "upload_id" in entry
+    assert "filename" in entry
+    assert entry["status"] == "pending_extraction"
+
+
+@pytest.mark.asyncio
 async def test_upload_errors_endpoint(client: AsyncClient, db_session: AsyncSession):
     """GET /upload/:id/errors returns error list."""
     headers, _ = await auth_headers(client)
