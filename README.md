@@ -1,32 +1,34 @@
-# AI-Enabled Clinical Uploads/Exports
+# MedTimeline
 
-Local-first, HIPAA-compliant clinical data pipeline. Ingests FHIR R4 bundles, Epic EHI exports, and unstructured clinical documents (PDF, RTF, TIFF) into a unified timeline with AI-powered entity extraction and summarization.
+Puts medical records from different formats into one place. Reads FHIR R4 bundles, Epic EHI exports (TSV), and scanned documents (PDF, RTF, TIFF), stores everything in PostgreSQL, and shows it on a timeline.
+
+AI is optional. Without an API key you still get record ingestion, a timeline, and de-identified prompt building you can paste into whatever LLM you want. Add a Gemini key and it'll also extract text from scans, pull out clinical entities, and generate summaries. Health data gets de-identified before any AI call — the PHI scrubber strips all 18 HIPAA identifier types.
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
-<!-- TODO: Create a seeded test account with realistic synthetic clinical data
-     (Synthea or similar FHIR-compliant patient generator) for richer screenshots
-     and documentation examples. See: https://synthea.mitre.org/ -->
+<!-- TODO: Seed a test account with synthetic clinical data (Synthea or similar)
+     for richer screenshots. See: https://synthea.mitre.org/ -->
 
 ## What it does
 
-- Parses FHIR R4 JSON bundles and Epic EHI Tables (TSV) into a normalized PostgreSQL database
+- Parses FHIR R4 JSON bundles and Epic EHI Tables (14 mappers) into a normalized PostgreSQL schema
 - Extracts text from PDFs, RTFs, and TIFFs via Gemini vision API
-- Identifies clinical entities (medications, conditions, labs, vitals, procedures, allergies, providers) with dynamic confidence scoring
-- Presents extracted entities for user review before creating FHIR records
-- Supports batch upload of multiple unstructured documents
-- Displays records on an interactive timeline with category filtering
-- Builds de-identified AI prompts for health summarization (prompt-only mode requires no API key)
-- Optionally calls Gemini directly for live summarization (text, JSON, or both)
-- Detects and resolves duplicate records via exact + fuzzy matching with hash-based bucketing
-- Full HIPAA compliance: AES-256 encryption at rest, audit logging on all endpoints, JWT auth with JTI-based token revocation, rate limiting, account lockout
+- Identifies clinical entities (meds, conditions, labs, vitals, procedures, allergies, providers) with confidence scores
+- Lets you review extracted entities before they become FHIR records
+- Batch upload for multiple documents at once
+- Timeline view with filtering by record type
+- Builds de-identified prompts you can paste into any LLM (no API key needed)
+- Optionally calls Gemini for live summarization (text, JSON, or both)
+- Finds duplicates with exact + fuzzy matching, then lets you merge or dismiss them
+
+On the HIPAA side: AES-256 encryption at rest, audit logging on every data endpoint, JWT auth with token revocation, rate limiting, and account lockout after failed attempts.
 
 ## Architecture
 
 ```
                          ┌─────────────────────────────────────────┐
                          │           Next.js Frontend              │
-                         │    (Forest Floor theme, 13 retro UI)    │
+                         │      (Mature Zen theme, 16 retro UI)    │
                          └──────────────────┬──────────────────────┘
                                             │ REST API
                          ┌──────────────────▼──────────────────────┐
@@ -51,7 +53,7 @@ Local-first, HIPAA-compliant clinical data pipeline. Ingests FHIR R4 bundles, Ep
               └──────────────────────────────────────────────────-┘
 ```
 
-**Dual-mode AI**: Mode 1 builds de-identified prompts for external use (no API key). Mode 2 calls Gemini directly for summarization and text extraction. All data passes through the PHI scrubber before any AI operation.
+Two AI modes: build prompts locally and run them yourself (no API key), or let the backend call Gemini directly. Both go through the PHI scrubber first.
 
 ## Tech stack
 
@@ -70,20 +72,20 @@ backend/
 │   ├── schemas/           # auth, records, timeline, summary, upload, dedup
 │   ├── api/               # auth, records, timeline, upload, summary, dedup, dashboard
 │   └── services/
-│       ├── ingestion/     # coordinator, fhir_parser, epic_parser, epic_mappers/
+│       ├── ingestion/     # coordinator, fhir_parser, epic_parser, epic_mappers/ (14 mappers)
 │       ├── ai/            # prompt_builder, summarizer, phi_scrubber
 │       ├── extraction/    # text_extractor, entity_extractor, entity_to_fhir
 │       └── dedup/         # detector
-├── tests/                 # 13 test files, 157 tests
+├── tests/                 # 15 test files, ~337 tests
 └── alembic/               # migrations
 
 frontend/src/
 ├── app/
 │   ├── (auth)/            # login, register
-│   └── (dashboard)/       # home, timeline, summaries, admin (12-tab console)
+│   └── (dashboard)/       # home, timeline, summaries, upload, admin (4-tab console)
 ├── components/
 │   ├── ui/                # shadcn components
-│   └── retro/             # 13 custom retro components (Forest Floor theme)
+│   └── retro/             # 16 custom components (Mature Zen theme)
 └── lib/                   # api.ts, utils.ts, constants.ts
 
 scripts/                   # init-db.sql, setup-local.sh, pg-tuning.sql, seed_sample_data.py
@@ -124,7 +126,7 @@ cp .env.example .env
 cd backend
 pip install -e ".[dev]"
 alembic upgrade head
-# Also run migrations against the test database:
+# Run migrations against the test database too:
 DATABASE_URL=postgresql+asyncpg://localhost:5432/medtimeline_test alembic upgrade head
 uvicorn app.main:app --reload --port 8000
 ```
@@ -147,24 +149,24 @@ cd backend
 # Fast tests (no API key needed)
 python -m pytest -x -v
 
-# All tests including Gemini API calls
+# Everything, including Gemini API calls
 python -m pytest -x -v --run-slow
 
 # HIPAA compliance tests only
 python -m pytest tests/test_hipaa_compliance.py -v
 ```
 
-157 tests across 13 test files covering auth, records, ingestion, extraction, summarization, deduplication, and HIPAA compliance.
+~337 tests across 15 files covering auth, records, ingestion (all 14 Epic mappers), extraction, summarization, dedup, HIPAA compliance, and fidelity checks for both Epic and FHIR imports.
 
-**Test database isolation**: Tests run against `medtimeline_test` (auto-derived from `DATABASE_URL` by appending `_test`). The test database must exist and have pgcrypto enabled before running tests. See the infrastructure step above.
+Tests hit a separate `medtimeline_test` database (auto-derived from `DATABASE_URL`). It needs to exist with pgcrypto enabled — see infrastructure step above.
 
-## API documentation
+## API docs
 
-Full API contract with request/response schemas: [`docs/backend-handoff.md`](docs/backend-handoff.md)
+Full contract with request/response schemas: [`docs/backend-handoff.md`](docs/backend-handoff.md)
 
 ## Environment variables
 
-See [`.env.example`](.env.example) for all options. The Gemini API key is only required for live summarization and text extraction — prompt-only mode works without it.
+See [`.env.example`](.env.example). The Gemini API key is only needed for live summarization and text extraction. Everything else works without it.
 
 ## License
 
