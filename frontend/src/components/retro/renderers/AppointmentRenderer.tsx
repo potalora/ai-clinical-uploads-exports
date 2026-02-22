@@ -49,7 +49,7 @@ export function AppointmentRenderer({ r }: { r: Record<string, unknown> }) {
           className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-md"
           style={{
             backgroundColor: statusColor,
-            color: status.toLowerCase() === "booked" ? "#0d0b08" : "var(--theme-text)",
+            color: status.toLowerCase() === "booked" ? "var(--theme-bg-deep)" : "var(--theme-text)",
           }}
         >
           {status}
@@ -64,8 +64,8 @@ export function AppointmentRenderer({ r }: { r: Record<string, unknown> }) {
         >
           <span
             style={{
-              fontFamily: "VT323, monospace",
-              fontSize: "18px",
+              fontFamily: "var(--font-mono)",
+              fontSize: "16px",
               color: "var(--record-appointment-text)",
             }}
           >
@@ -76,8 +76,8 @@ export function AppointmentRenderer({ r }: { r: Record<string, unknown> }) {
               <span style={{ color: "var(--theme-text-muted)" }}>→</span>
               <span
                 style={{
-                  fontFamily: "VT323, monospace",
-                  fontSize: "18px",
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "16px",
                   color: "var(--record-appointment-text)",
                 }}
               >

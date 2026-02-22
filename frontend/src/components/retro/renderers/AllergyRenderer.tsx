@@ -60,7 +60,7 @@ export function AllergyRenderer({ r }: { r: Record<string, unknown> }) {
           className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-md"
           style={{
             backgroundColor: borderColor,
-            color: severityLower === "mild" || severityLower === "low" ? "#0d0b08" : "var(--theme-text)",
+            color: severityLower === "mild" || severityLower === "low" ? "var(--theme-bg-deep)" : "var(--theme-text)",
           }}
         >
           {severity}

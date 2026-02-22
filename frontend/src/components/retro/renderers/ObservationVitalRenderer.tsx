@@ -31,8 +31,8 @@ export function ObservationVitalRenderer({ r }: { r: Record<string, unknown> }) 
         <div className="flex items-baseline gap-2">
           <span
             style={{
-              fontFamily: "VT323, monospace",
-              fontSize: "28px",
+              fontFamily: "var(--font-mono)",
+              fontSize: "24px",
               lineHeight: 1,
               color: "var(--theme-amber)",
             }}
@@ -61,8 +61,8 @@ export function ObservationVitalRenderer({ r }: { r: Record<string, unknown> }) 
                 {i > 0 && (
                   <span
                     style={{
-                      fontFamily: "VT323, monospace",
-                      fontSize: "20px",
+                      fontFamily: "var(--font-mono)",
+                      fontSize: "18px",
                       color: "var(--theme-text-muted)",
                     }}
                   >
@@ -72,8 +72,8 @@ export function ObservationVitalRenderer({ r }: { r: Record<string, unknown> }) 
                 <div className="flex items-baseline gap-1" title={compName}>
                   <span
                     style={{
-                      fontFamily: "VT323, monospace",
-                      fontSize: "28px",
+                      fontFamily: "var(--font-mono)",
+                      fontSize: "24px",
                       lineHeight: 1,
                       color: "var(--theme-amber)",
                     }}

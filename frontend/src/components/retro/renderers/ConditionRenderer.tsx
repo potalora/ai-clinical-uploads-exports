@@ -20,10 +20,10 @@ export function ConditionRenderer({ r }: { r: Record<string, unknown> }) {
 
   const statusLower = clinicalStatus.toLowerCase();
   const statusConfig: Record<string, { bg: string; text: string; pulse: boolean }> = {
-    active: { bg: "var(--theme-sage)", text: "#0d0b08", pulse: true },
+    active: { bg: "var(--theme-sage)", text: "var(--theme-bg-deep)", pulse: true },
     resolved: { bg: "var(--theme-text-muted)", text: "var(--theme-bg-deep)", pulse: false },
     inactive: { bg: "var(--theme-bg-deep)", text: "var(--theme-text-dim)", pulse: false },
-    recurrence: { bg: "var(--theme-ochre)", text: "#0d0b08", pulse: true },
+    recurrence: { bg: "var(--theme-ochre)", text: "var(--theme-bg-deep)", pulse: true },
     remission: { bg: "var(--theme-text-dim)", text: "var(--theme-bg-deep)", pulse: false },
   };
   const config = statusConfig[statusLower] ?? { bg: "var(--theme-bg-deep)", text: "var(--theme-text)", pulse: false };

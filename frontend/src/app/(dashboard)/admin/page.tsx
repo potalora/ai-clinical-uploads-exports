@@ -327,7 +327,7 @@ function ExtractionsTab() {
                   <RetroTableCell>
                     <span
                       style={{
-                        fontFamily: "VT323, monospace",
+                        fontFamily: "var(--font-mono)",
                         fontSize: "0.9rem",
                         color: "var(--theme-text-dim)",
                       }}
@@ -344,7 +344,7 @@ function ExtractionsTab() {
                   <RetroTableCell>
                     <span
                       style={{
-                        fontFamily: "VT323, monospace",
+                        fontFamily: "var(--font-mono)",
                         fontSize: "0.9rem",
                         color: "var(--theme-text-dim)",
                       }}
@@ -561,7 +561,7 @@ function RecordsTab() {
         >
           <span
             style={{
-              fontFamily: "'VT323', monospace",
+              fontFamily: "var(--font-mono)",
               fontSize: "1rem",
               color: "var(--theme-text)",
             }}
@@ -794,7 +794,7 @@ function TypeTreeNode({
         </span>
         <span
           style={{
-            fontFamily: "'VT323', monospace",
+            fontFamily: "var(--font-mono)",
             fontSize: "0.875rem",
             color: "var(--theme-text-muted)",
           }}
@@ -1055,7 +1055,7 @@ function UploadTreeNode({
         </div>
         <span
           style={{
-            fontFamily: "'VT323', monospace",
+            fontFamily: "var(--font-mono)",
             fontSize: "0.875rem",
             color: "var(--theme-text-muted)",
             flexShrink: 0,

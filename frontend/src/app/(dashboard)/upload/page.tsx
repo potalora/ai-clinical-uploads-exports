@@ -512,8 +512,8 @@ export default function UploadPage() {
             <span
               className="animate-pulse"
               style={{
-                fontFamily: "VT323, monospace",
-                fontSize: "1.1rem",
+                fontFamily: "var(--font-mono)",
+                fontSize: "1rem",
                 color: "var(--theme-amber)",
                 display: "block",
                 marginBottom: "0.5rem",
@@ -551,7 +551,7 @@ export default function UploadPage() {
             </div>
             <span
               style={{
-                fontFamily: "VT323, monospace",
+                fontFamily: "var(--font-mono)",
                 fontSize: "0.95rem",
                 color: "var(--theme-amber)",
                 display: "block",
@@ -583,8 +583,8 @@ export default function UploadPage() {
               <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
                 <span
                   style={{
-                    fontFamily: "VT323, monospace",
-                    fontSize: "1.1rem",
+                    fontFamily: "var(--font-mono)",
+                    fontSize: "1rem",
                     color: "var(--theme-amber)",
                   }}
                 >
@@ -663,7 +663,7 @@ export default function UploadPage() {
                 >
                   <span
                     style={{
-                      fontFamily: "VT323, monospace",
+                      fontFamily: "var(--font-mono)",
                       fontSize: "0.95rem",
                       color: "var(--theme-text)",
                     }}
@@ -672,7 +672,7 @@ export default function UploadPage() {
                   </span>
                   <span
                     style={{
-                      fontFamily: "VT323, monospace",
+                      fontFamily: "var(--font-mono)",
                       fontSize: "0.85rem",
                       color: "var(--theme-text-muted)",
                     }}
@@ -702,8 +702,8 @@ export default function UploadPage() {
             <span
               className="animate-pulse"
               style={{
-                fontFamily: "VT323, monospace",
-                fontSize: "1.1rem",
+                fontFamily: "var(--font-mono)",
+                fontSize: "1rem",
                 color: "var(--theme-amber)",
               }}
             >
@@ -770,7 +770,7 @@ export default function UploadPage() {
                 >
                   <span
                     style={{
-                      fontFamily: "VT323, monospace",
+                      fontFamily: "var(--font-mono)",
                       fontSize: "0.95rem",
                       color: "var(--theme-text)",
                     }}
@@ -853,7 +853,7 @@ export default function UploadPage() {
                         <p
                           key={j}
                           style={{
-                            fontFamily: "VT323, monospace",
+                            fontFamily: "var(--font-mono)",
                             fontSize: "0.85rem",
                             padding: "0.35rem 0.5rem",
                             backgroundColor: "var(--theme-bg-deep)",
@@ -890,8 +890,8 @@ export default function UploadPage() {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span
                   style={{
-                    fontFamily: "VT323, monospace",
-                    fontSize: "1.1rem",
+                    fontFamily: "var(--font-mono)",
+                    fontSize: "1rem",
                     color: extractionProgress.processing > 0
                       ? "var(--theme-amber)"
                       : "var(--theme-sage)",
@@ -902,7 +902,7 @@ export default function UploadPage() {
                 </span>
                 <span
                   style={{
-                    fontFamily: "VT323, monospace",
+                    fontFamily: "var(--font-mono)",
                     fontSize: "1rem",
                     color: "var(--theme-sage)",
                   }}
@@ -1266,7 +1266,7 @@ export default function UploadPage() {
                       <RetroTableCell>
                         <span
                           style={{
-                            fontFamily: "VT323, monospace",
+                            fontFamily: "var(--font-mono)",
                             fontSize: "0.9rem",
                             color: "var(--theme-text-dim)",
                           }}
@@ -1295,7 +1295,7 @@ export default function UploadPage() {
                       <RetroTableCell>
                         <span
                           style={{
-                            fontFamily: "VT323, monospace",
+                            fontFamily: "var(--font-mono)",
                             fontSize: "0.9rem",
                             color: "var(--theme-text-dim)",
                           }}

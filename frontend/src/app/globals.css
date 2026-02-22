@@ -48,228 +48,228 @@
 }
 
 /* ============================================
-   FRIENDLY 80s EARTH-TONE PALETTE
+   MATURE ZEN — COOL MOSS PALETTE
    Light + Dark mode support
    ============================================ */
 
 :root {
-  --radius: 0.25rem;
+  --radius: 0.625rem;
 
   /* Theme palette tokens — light mode */
-  --theme-bg-deep: #f7f4ef;
-  --theme-bg-surface: #efe9df;
+  --theme-bg-deep: #f3f5f4;
+  --theme-bg-surface: #e8edea;
   --theme-bg-card: #ffffff;
-  --theme-bg-card-hover: #faf6f0;
-  --theme-text: #2a2f26;
-  --theme-text-dim: #5c6358;
-  --theme-text-muted: #6b7265;
-  --theme-amber: #4a7c59;
-  --theme-amber-dim: #3d6649;
-  --theme-terracotta: #b54834;
-  --theme-sage: #5a7a50;
-  --theme-ochre: #b8860b;
-  --theme-sienna: #8b6914;
-  --theme-border: #d4cdc0;
-  --theme-border-active: #b8b0a0;
-  --theme-glow-rgb: 74, 124, 89;
+  --theme-bg-card-hover: #f0f4f2;
+  --theme-text: #1e2a24;
+  --theme-text-dim: #546059;
+  --theme-text-muted: #7a8a82;
+  --theme-amber: #4a7a6a;
+  --theme-amber-dim: #3d6658;
+  --theme-terracotta: #c25550;
+  --theme-sage: #5a8070;
+  --theme-ochre: #8a7a5a;
+  --theme-sienna: #7a6e58;
+  --theme-border: #d0d8d4;
+  --theme-border-active: #a8b8b0;
+  --theme-glow-rgb: 74, 122, 106;
 
   /* shadcn semantic tokens — light mode */
-  --background: #f7f4ef;
-  --foreground: #2a2f26;
+  --background: #f3f5f4;
+  --foreground: #1e2a24;
   --card: #ffffff;
-  --card-foreground: #2a2f26;
+  --card-foreground: #1e2a24;
   --popover: #ffffff;
-  --popover-foreground: #2a2f26;
-  --primary: #4a7c59;
+  --popover-foreground: #1e2a24;
+  --primary: #4a7a6a;
   --primary-foreground: #ffffff;
-  --secondary: #efe9df;
-  --secondary-foreground: #2a2f26;
-  --muted: #efe9df;
-  --muted-foreground: #5c6358;
-  --accent: #faf6f0;
-  --accent-foreground: #2a2f26;
-  --destructive: #b54834;
-  --border: #d4cdc0;
-  --input: #d4cdc0;
-  --ring: #4a7c59;
-  --chart-1: #4a7c59;
-  --chart-2: #b8860b;
-  --chart-3: #5a7a50;
-  --chart-4: #b54834;
-  --chart-5: #8b6914;
-  --sidebar: #efe9df;
-  --sidebar-foreground: #2a2f26;
-  --sidebar-primary: #4a7c59;
+  --secondary: #e8edea;
+  --secondary-foreground: #1e2a24;
+  --muted: #e8edea;
+  --muted-foreground: #546059;
+  --accent: #f0f4f2;
+  --accent-foreground: #1e2a24;
+  --destructive: #c25550;
+  --border: #d0d8d4;
+  --input: #d0d8d4;
+  --ring: #4a7a6a;
+  --chart-1: #4a7a6a;
+  --chart-2: #8a7a5a;
+  --chart-3: #5a8070;
+  --chart-4: #c25550;
+  --chart-5: #7a6e58;
+  --sidebar: #e8edea;
+  --sidebar-foreground: #1e2a24;
+  --sidebar-primary: #4a7a6a;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #faf6f0;
-  --sidebar-accent-foreground: #2a2f26;
-  --sidebar-border: #d4cdc0;
-  --sidebar-ring: #4a7c59;
+  --sidebar-accent: #f0f4f2;
+  --sidebar-accent-foreground: #1e2a24;
+  --sidebar-border: #d0d8d4;
+  --sidebar-ring: #4a7a6a;
 
   /* Record type colors — light mode */
-  --record-condition-bg: #fdf6e3;
-  --record-condition-text: #7a6200;
-  --record-condition-dot: #b8860b;
-  --record-observation-bg: #eef5eb;
-  --record-observation-text: #3d6632;
-  --record-observation-dot: #4a7c59;
-  --record-medication-bg: #fde8e2;
-  --record-medication-text: #8a4030;
-  --record-medication-dot: #c47a5a;
-  --record-encounter-bg: #e6f0ee;
-  --record-encounter-text: #3a6a5a;
-  --record-encounter-dot: #5a8c7a;
-  --record-immunization-bg: #fdf6e3;
-  --record-immunization-text: #7a6200;
-  --record-immunization-dot: #b8960b;
-  --record-procedure-bg: #e8eef4;
-  --record-procedure-text: #3a5a6e;
-  --record-procedure-dot: #5a7a8c;
-  --record-document-bg: #f0ece6;
-  --record-document-text: #5a5040;
-  --record-document-dot: #8a7a6a;
-  --record-allergy-bg: #fce4e0;
-  --record-allergy-text: #8a3020;
-  --record-allergy-dot: #b54834;
-  --record-imaging-bg: #f0e8f4;
-  --record-imaging-text: #5a3a6a;
-  --record-imaging-dot: #8a5a7a;
-  --record-diagnostic_report-bg: #fdf6e3;
-  --record-diagnostic_report-text: #6a5800;
-  --record-diagnostic_report-dot: #b8960b;
-  --record-service_request-bg: #fdf6e3;
-  --record-service_request-text: #7a6200;
-  --record-service_request-dot: #b8960b;
-  --record-communication-bg: #f0ece6;
-  --record-communication-text: #5a5040;
-  --record-communication-dot: #8a7a6a;
+  --record-condition-bg: #f0f4e8;
+  --record-condition-text: #5a6e40;
+  --record-condition-dot: #7a8e5a;
+  --record-observation-bg: #eaf2f0;
+  --record-observation-text: #3a6a5e;
+  --record-observation-dot: #4a8a78;
+  --record-medication-bg: #f4ece8;
+  --record-medication-text: #7a4a40;
+  --record-medication-dot: #a46858;
+  --record-encounter-bg: #e8f0f2;
+  --record-encounter-text: #3a5a68;
+  --record-encounter-dot: #5a7a88;
+  --record-immunization-bg: #eef0e8;
+  --record-immunization-text: #5a6640;
+  --record-immunization-dot: #7a8858;
+  --record-procedure-bg: #e8ecf4;
+  --record-procedure-text: #3e5070;
+  --record-procedure-dot: #5a7090;
+  --record-document-bg: #eeece8;
+  --record-document-text: #5a5448;
+  --record-document-dot: #7a7468;
+  --record-allergy-bg: #f4e8e8;
+  --record-allergy-text: #8a3a38;
+  --record-allergy-dot: #b05050;
+  --record-imaging-bg: #ece8f0;
+  --record-imaging-text: #5a4068;
+  --record-imaging-dot: #7a5a88;
+  --record-diagnostic_report-bg: #eef0ec;
+  --record-diagnostic_report-text: #4a5e48;
+  --record-diagnostic_report-dot: #6a7e68;
+  --record-service_request-bg: #f0eeea;
+  --record-service_request-text: #6a5a3e;
+  --record-service_request-dot: #8a7a58;
+  --record-communication-bg: #eaecee;
+  --record-communication-text: #485660;
+  --record-communication-dot: #687880;
   --record-appointment-bg: #e8eef4;
-  --record-appointment-text: #3a5a6e;
-  --record-appointment-dot: #5a7a8c;
-  --record-care_plan-bg: #eef5eb;
-  --record-care_plan-text: #3d6632;
-  --record-care_plan-dot: #5a7a50;
-  --record-care_team-bg: #eef5eb;
-  --record-care_team-text: #3d6632;
-  --record-care_team-dot: #5a7a50;
-  --record-questionnaire_response-bg: #f0ece6;
-  --record-questionnaire_response-text: #5a5040;
-  --record-questionnaire_response-dot: #8a7a6a;
-  --record-immunization_recommendation-bg: #fdf6e3;
-  --record-immunization_recommendation-text: #7a6200;
-  --record-immunization_recommendation-dot: #b8960b;
-  --record-default-bg: #f0ece6;
-  --record-default-text: #5a5040;
-  --record-default-dot: #8a7a6a;
+  --record-appointment-text: #3a5672;
+  --record-appointment-dot: #5a7692;
+  --record-care_plan-bg: #eaf0ec;
+  --record-care_plan-text: #3e6650;
+  --record-care_plan-dot: #5a8068;
+  --record-care_team-bg: #e8f0ee;
+  --record-care_team-text: #3a6058;
+  --record-care_team-dot: #5a8078;
+  --record-questionnaire_response-bg: #ececee;
+  --record-questionnaire_response-text: #50505a;
+  --record-questionnaire_response-dot: #707078;
+  --record-immunization_recommendation-bg: #eef0e8;
+  --record-immunization_recommendation-text: #58664a;
+  --record-immunization_recommendation-dot: #788a60;
+  --record-default-bg: #ececee;
+  --record-default-text: #50505a;
+  --record-default-dot: #707078;
 }
 
 .dark {
   /* Theme palette tokens — dark mode */
-  --theme-bg-deep: #1c2118;
-  --theme-bg-surface: #262f22;
-  --theme-bg-card: #2f3a2a;
-  --theme-bg-card-hover: #384432;
-  --theme-text: #e4dfd4;
-  --theme-text-dim: #a0a896;
-  --theme-text-muted: #8a9182;
-  --theme-amber: #6aa67a;
-  --theme-amber-dim: #558a62;
-  --theme-terracotta: #d06040;
-  --theme-sage: #7a9c60;
-  --theme-ochre: #d4a843;
-  --theme-sienna: #c4a020;
-  --theme-border: #3a4436;
-  --theme-border-active: #4a5a42;
-  --theme-glow-rgb: 106, 166, 122;
+  --theme-bg-deep: #141c1a;
+  --theme-bg-surface: #1c2624;
+  --theme-bg-card: #232e2c;
+  --theme-bg-card-hover: #2c3836;
+  --theme-text: #dce4e0;
+  --theme-text-dim: #92a49c;
+  --theme-text-muted: #6e807a;
+  --theme-amber: #6aa694;
+  --theme-amber-dim: #508a78;
+  --theme-terracotta: #d4605a;
+  --theme-sage: #6a9c88;
+  --theme-ochre: #b4a070;
+  --theme-sienna: #a0906a;
+  --theme-border: #2e3c3a;
+  --theme-border-active: #3e504c;
+  --theme-glow-rgb: 106, 166, 148;
 
   /* shadcn semantic tokens — dark mode */
-  --background: #1c2118;
-  --foreground: #e4dfd4;
-  --card: #2f3a2a;
-  --card-foreground: #e4dfd4;
-  --popover: #262f22;
-  --popover-foreground: #e4dfd4;
-  --primary: #6aa67a;
-  --primary-foreground: #1c2118;
-  --secondary: #384432;
-  --secondary-foreground: #e4dfd4;
-  --muted: #262f22;
-  --muted-foreground: #a0a896;
-  --accent: #384432;
-  --accent-foreground: #e4dfd4;
-  --destructive: #d06040;
-  --border: #3a4436;
-  --input: #3a4436;
-  --ring: #6aa67a;
-  --chart-1: #6aa67a;
-  --chart-2: #d4a843;
-  --chart-3: #7a9c60;
-  --chart-4: #d06040;
-  --chart-5: #c4a020;
-  --sidebar: #262f22;
-  --sidebar-foreground: #e4dfd4;
-  --sidebar-primary: #6aa67a;
-  --sidebar-primary-foreground: #1c2118;
-  --sidebar-accent: #384432;
-  --sidebar-accent-foreground: #e4dfd4;
-  --sidebar-border: #3a4436;
-  --sidebar-ring: #6aa67a;
+  --background: #141c1a;
+  --foreground: #dce4e0;
+  --card: #232e2c;
+  --card-foreground: #dce4e0;
+  --popover: #1c2624;
+  --popover-foreground: #dce4e0;
+  --primary: #6aa694;
+  --primary-foreground: #141c1a;
+  --secondary: #2c3836;
+  --secondary-foreground: #dce4e0;
+  --muted: #1c2624;
+  --muted-foreground: #92a49c;
+  --accent: #2c3836;
+  --accent-foreground: #dce4e0;
+  --destructive: #d4605a;
+  --border: #2e3c3a;
+  --input: #2e3c3a;
+  --ring: #6aa694;
+  --chart-1: #6aa694;
+  --chart-2: #b4a070;
+  --chart-3: #6a9c88;
+  --chart-4: #d4605a;
+  --chart-5: #a0906a;
+  --sidebar: #1c2624;
+  --sidebar-foreground: #dce4e0;
+  --sidebar-primary: #6aa694;
+  --sidebar-primary-foreground: #141c1a;
+  --sidebar-accent: #2c3836;
+  --sidebar-accent-foreground: #dce4e0;
+  --sidebar-border: #2e3c3a;
+  --sidebar-ring: #6aa694;
 
   /* Record type colors — dark mode */
-  --record-condition-bg: #3d2e14;
-  --record-condition-text: #d4a843;
-  --record-condition-dot: #d4a843;
-  --record-observation-bg: #1e2e1a;
-  --record-observation-text: #7a8c5a;
-  --record-observation-dot: #7a8c5a;
-  --record-medication-bg: #2e1a14;
-  --record-medication-text: #c47a5a;
-  --record-medication-dot: #c47a5a;
-  --record-encounter-bg: #1a2e28;
-  --record-encounter-text: #5a8c7a;
-  --record-encounter-dot: #5a8c7a;
-  --record-immunization-bg: #2e2214;
-  --record-immunization-text: #d49a40;
-  --record-immunization-dot: #d49a40;
-  --record-procedure-bg: #1a2230;
-  --record-procedure-text: #5a7a8c;
-  --record-procedure-dot: #5a7a8c;
-  --record-document-bg: #252018;
-  --record-document-text: #8a7a6a;
-  --record-document-dot: #8a7a6a;
-  --record-allergy-bg: #301414;
-  --record-allergy-text: #c45a3c;
-  --record-allergy-dot: #c45a3c;
-  --record-imaging-bg: #28182e;
-  --record-imaging-text: #8a5a7a;
-  --record-imaging-dot: #8a5a7a;
-  --record-diagnostic_report-bg: #2e2a14;
-  --record-diagnostic_report-text: #c4a040;
-  --record-diagnostic_report-dot: #c4a040;
-  --record-service_request-bg: #2e2214;
-  --record-service_request-text: #d49a40;
-  --record-service_request-dot: #d49a40;
-  --record-communication-bg: #252018;
-  --record-communication-text: #8a7a6a;
-  --record-communication-dot: #8a7a6a;
+  --record-condition-bg: #222e1e;
+  --record-condition-text: #8aaa6a;
+  --record-condition-dot: #8aaa6a;
+  --record-observation-bg: #1a2a28;
+  --record-observation-text: #5a9a88;
+  --record-observation-dot: #5a9a88;
+  --record-medication-bg: #2a1e1c;
+  --record-medication-text: #b07060;
+  --record-medication-dot: #b07060;
+  --record-encounter-bg: #1a242e;
+  --record-encounter-text: #5a8a9a;
+  --record-encounter-dot: #5a8a9a;
+  --record-immunization-bg: #242a1e;
+  --record-immunization-text: #8a9a60;
+  --record-immunization-dot: #8a9a60;
+  --record-procedure-bg: #1c2030;
+  --record-procedure-text: #6a80a0;
+  --record-procedure-dot: #6a80a0;
+  --record-document-bg: #242220;
+  --record-document-text: #8a8070;
+  --record-document-dot: #8a8070;
+  --record-allergy-bg: #2c1a1a;
+  --record-allergy-text: #c06060;
+  --record-allergy-dot: #c06060;
+  --record-imaging-bg: #241e2a;
+  --record-imaging-text: #8a6a9a;
+  --record-imaging-dot: #8a6a9a;
+  --record-diagnostic_report-bg: #1e2a1e;
+  --record-diagnostic_report-text: #6a9a6a;
+  --record-diagnostic_report-dot: #6a9a6a;
+  --record-service_request-bg: #28241e;
+  --record-service_request-text: #a09060;
+  --record-service_request-dot: #a09060;
+  --record-communication-bg: #1e2226;
+  --record-communication-text: #7090a0;
+  --record-communication-dot: #7090a0;
   --record-appointment-bg: #1a2230;
-  --record-appointment-text: #5a7a8c;
-  --record-appointment-dot: #5a7a8c;
-  --record-care_plan-bg: #1e2e1a;
-  --record-care_plan-text: #7a8c5a;
-  --record-care_plan-dot: #7a8c5a;
-  --record-care_team-bg: #1e2e1a;
-  --record-care_team-text: #7a8c5a;
-  --record-care_team-dot: #7a8c5a;
-  --record-questionnaire_response-bg: #252018;
-  --record-questionnaire_response-text: #8a7a6a;
-  --record-questionnaire_response-dot: #8a7a6a;
-  --record-immunization_recommendation-bg: #2e2214;
-  --record-immunization_recommendation-text: #d49a40;
-  --record-immunization_recommendation-dot: #d49a40;
-  --record-default-bg: #252018;
-  --record-default-text: #8a7a6a;
-  --record-default-dot: #8a7a6a;
+  --record-appointment-text: #5a80a0;
+  --record-appointment-dot: #5a80a0;
+  --record-care_plan-bg: #1c2a22;
+  --record-care_plan-text: #5a9a70;
+  --record-care_plan-dot: #5a9a70;
+  --record-care_team-bg: #1a2826;
+  --record-care_team-text: #5a9a88;
+  --record-care_team-dot: #5a9a88;
+  --record-questionnaire_response-bg: #222224;
+  --record-questionnaire_response-text: #808088;
+  --record-questionnaire_response-dot: #808088;
+  --record-immunization_recommendation-bg: #24281e;
+  --record-immunization_recommendation-text: #889a68;
+  --record-immunization_recommendation-dot: #889a68;
+  --record-default-bg: #222224;
+  --record-default-text: #808088;
+  --record-default-dot: #808088;
 }
 
 @layer base {
@@ -283,16 +283,16 @@
 }
 
 /* ============================================
-   WARM UTILITY CLASSES
+   THEME UTILITY CLASSES
    ============================================ */
 
 /* Soft card shadow */
 .theme-shadow {
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+  box-shadow: 0 1px 4px rgba(30, 60, 50, 0.07), 0 1px 2px rgba(30, 60, 50, 0.04);
 }
 
 .theme-shadow-hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1), 0 2px 4px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 4px 14px rgba(30, 60, 50, 0.09), 0 2px 4px rgba(30, 60, 50, 0.05);
 }
 
 /* Focus ring */
@@ -316,7 +316,7 @@
 @keyframes fade-in-up {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(6px);
   }
   to {
     opacity: 1;
@@ -347,8 +347,8 @@
    ============================================ */
 
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
@@ -357,7 +357,7 @@
 
 ::-webkit-scrollbar-thumb {
   background: var(--theme-border);
-  border-radius: 1px;
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
@@ -456,5 +456,5 @@ select option {
 }
 
 .pulse-dot {
-  animation: pulse-dot 2s ease-in-out infinite;
+  animation: pulse-dot 2.5s ease-in-out infinite;
 }

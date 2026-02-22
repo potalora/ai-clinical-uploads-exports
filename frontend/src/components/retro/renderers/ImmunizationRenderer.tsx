@@ -66,7 +66,7 @@ export function ImmunizationRenderer({ r }: { r: Record<string, unknown> }) {
             <div className="flex items-baseline gap-1.5">
               <span style={{ color: "var(--theme-text-muted)" }}>Lot</span>
               <span
-                style={{ fontFamily: "VT323, monospace", fontSize: "14px", color: "var(--theme-text)" }}
+                style={{ fontFamily: "var(--font-mono)", fontSize: "13px", color: "var(--theme-text)" }}
               >
                 {lotNumber}
               </span>

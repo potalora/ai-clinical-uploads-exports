@@ -85,8 +85,8 @@ export function ObservationLabRenderer({ r }: { r: Record<string, unknown> }) {
         <div className="flex items-baseline gap-2">
           <span
             style={{
-              fontFamily: "VT323, monospace",
-              fontSize: "28px",
+              fontFamily: "var(--font-mono)",
+              fontSize: "24px",
               lineHeight: 1,
               color: "var(--theme-amber)",
             }}

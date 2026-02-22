@@ -314,7 +314,7 @@ export function AdvancedSection({ fhirResource }: AdvancedSectionProps) {
           style={{
             backgroundColor: "var(--theme-bg-deep)",
             color: "var(--theme-text-dim)",
-            borderRadius: "4px",
+            borderRadius: "var(--radius-lg)",
             border: "1px solid var(--theme-border)",
           }}
         >
