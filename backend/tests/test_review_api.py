@@ -8,16 +8,30 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.deduplication import DedupCandidate
+from app.models.patient import Patient
 from app.models.record import HealthRecord
 from app.models.uploaded_file import UploadedFile
-from tests.conftest import auth_headers, create_test_patient
+from tests.conftest import auth_headers
 
 
-async def _create_upload_with_candidates(
-    db: AsyncSession, user_id, patient_id, *, auto_merged: int = 0, pending: int = 0
+async def _setup_upload_scenario(
+    db: AsyncSession,
+    user_id: str,
+    *,
+    auto_merged: int = 0,
+    pending: int = 0,
 ) -> tuple:
-    """Helper: create an upload with dedup candidates."""
-    uid = UUID(user_id) if isinstance(user_id, str) else user_id
+    """Create a patient, upload, and dedup candidates within the current transaction.
+
+    Uses flush (not commit) so data is visible in the shared session without
+    creating a new transaction boundary that races with the auth service's commit.
+    """
+    uid = UUID(user_id)
+
+    # Create patient via flush (same transaction as upload setup)
+    patient = Patient(id=uuid4(), user_id=uid, fhir_id="test-patient-001", gender="male")
+    db.add(patient)
+    await db.flush()
 
     upload = UploadedFile(
         id=uuid4(),
@@ -43,7 +57,7 @@ async def _create_upload_with_candidates(
     for i in range(auto_merged + pending):
         rec_a = HealthRecord(
             id=uuid4(),
-            patient_id=patient_id,
+            patient_id=patient.id,
             user_id=uid,
             record_type="medication",
             fhir_resource_type="MedicationRequest",
@@ -57,7 +71,7 @@ async def _create_upload_with_candidates(
         )
         rec_b = HealthRecord(
             id=uuid4(),
-            patient_id=patient_id,
+            patient_id=patient.id,
             user_id=uid,
             record_type="medication",
             fhir_resource_type="MedicationRequest",
@@ -119,10 +133,9 @@ async def test_review_returns_grouped_candidates(
 ):
     """Review endpoint groups candidates into auto_merged and needs_review."""
     headers, uid = await auth_headers(client, email="review_grouped@test.com")
-    patient = await create_test_patient(db_session, uid)
 
-    upload, candidates = await _create_upload_with_candidates(
-        db_session, uid, patient.id, auto_merged=2, pending=1
+    upload, candidates = await _setup_upload_scenario(
+        db_session, uid, auto_merged=2, pending=1
     )
 
     resp = await client.get(f"/api/v1/upload/{upload.id}/review", headers=headers)
@@ -139,11 +152,8 @@ async def test_review_returns_grouped_candidates(
 async def test_resolve_merge(client: AsyncClient, db_session: AsyncSession):
     """Resolving a pending candidate with action=merge marks it merged."""
     headers, uid = await auth_headers(client, email="review_merge@test.com")
-    patient = await create_test_patient(db_session, uid)
 
-    upload, candidates = await _create_upload_with_candidates(
-        db_session, uid, patient.id, pending=1
-    )
+    upload, candidates = await _setup_upload_scenario(db_session, uid, pending=1)
 
     resp = await client.post(
         f"/api/v1/upload/{upload.id}/review/resolve",
@@ -164,11 +174,8 @@ async def test_resolve_merge(client: AsyncClient, db_session: AsyncSession):
 async def test_resolve_dismiss(client: AsyncClient, db_session: AsyncSession):
     """Resolving a pending candidate with action=dismiss marks it dismissed."""
     headers, uid = await auth_headers(client, email="review_dismiss@test.com")
-    patient = await create_test_patient(db_session, uid)
 
-    upload, candidates = await _create_upload_with_candidates(
-        db_session, uid, patient.id, pending=1
-    )
+    upload, candidates = await _setup_upload_scenario(db_session, uid, pending=1)
 
     resp = await client.post(
         f"/api/v1/upload/{upload.id}/review/resolve",
@@ -188,11 +195,8 @@ async def test_resolve_dismiss(client: AsyncClient, db_session: AsyncSession):
 async def test_undo_merge(client: AsyncClient, db_session: AsyncSession):
     """Undoing an auto-merged candidate restores pending status."""
     headers, uid = await auth_headers(client, email="review_undo@test.com")
-    patient = await create_test_patient(db_session, uid)
 
-    upload, candidates = await _create_upload_with_candidates(
-        db_session, uid, patient.id, auto_merged=1
-    )
+    upload, candidates = await _setup_upload_scenario(db_session, uid, auto_merged=1)
 
     resp = await client.post(
         f"/api/v1/upload/{upload.id}/review/undo-merge",
@@ -210,11 +214,8 @@ async def test_undo_merge_not_merged_returns_400(
 ):
     """Attempting to undo a candidate that is not merged returns 400."""
     headers, uid = await auth_headers(client, email="review_undo400@test.com")
-    patient = await create_test_patient(db_session, uid)
 
-    upload, candidates = await _create_upload_with_candidates(
-        db_session, uid, patient.id, pending=1
-    )
+    upload, candidates = await _setup_upload_scenario(db_session, uid, pending=1)
 
     resp = await client.post(
         f"/api/v1/upload/{upload.id}/review/undo-merge",
