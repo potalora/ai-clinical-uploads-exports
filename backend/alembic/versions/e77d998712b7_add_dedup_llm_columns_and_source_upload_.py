@@ -25,9 +25,11 @@ def upgrade() -> None:
     op.add_column('dedup_candidates', sa.Column('llm_explanation', sa.Text(), nullable=True))
     op.add_column('dedup_candidates', sa.Column('field_diff', postgresql.JSONB(astext_type=sa.Text()), nullable=True))
     op.add_column('dedup_candidates', sa.Column('auto_resolved', sa.Boolean(), server_default='false', nullable=False))
-    op.add_column('dedup_candidates', sa.Column('source_upload_id', sa.UUID(), nullable=True))
+    op.add_column('dedup_candidates', sa.Column('source_upload_id', postgresql.UUID(as_uuid=True), nullable=True))
     op.create_foreign_key(
-        None, 'dedup_candidates', 'uploaded_files', ['source_upload_id'], ['id']
+        "fk_dedup_candidates_source_upload_id",
+        'dedup_candidates', 'uploaded_files',
+        ['source_upload_id'], ['id']
     )
     op.create_index(
         "ix_dedup_source_upload",
@@ -40,7 +42,21 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Downgrade schema."""
     op.drop_index("ix_dedup_source_upload", table_name="dedup_candidates")
-    op.drop_constraint(None, 'dedup_candidates', type_='foreignkey')
+    # Drop FK by explicit name (new installs) or the auto-generated name (existing DBs
+    # that were migrated before the constraint was given an explicit name).
+    bind = op.get_bind()
+    row = bind.execute(
+        sa.text(
+            "SELECT conname FROM pg_constraint "
+            "WHERE conrelid = 'dedup_candidates'::regclass "
+            "AND contype = 'f' "
+            "AND conname IN ('fk_dedup_candidates_source_upload_id', "
+            "                'dedup_candidates_source_upload_id_fkey') "
+            "LIMIT 1"
+        )
+    ).fetchone()
+    if row:
+        op.drop_constraint(row[0], 'dedup_candidates', type_='foreignkey')
     op.drop_column('dedup_candidates', 'source_upload_id')
     op.drop_column('dedup_candidates', 'auto_resolved')
     op.drop_column('dedup_candidates', 'field_diff')
