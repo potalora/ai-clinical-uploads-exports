@@ -962,3 +962,266 @@ async def confirm_extraction(
         "records_created": created_count,
         "status": "completed",
     }
+
+
+@router.get("/{upload_id}/review")
+async def get_upload_review(
+    upload_id: UUID,
+    user_id: UUID = Depends(get_authenticated_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get dedup review data for an upload."""
+    from app.models.deduplication import DedupCandidate
+
+    result = await db.execute(
+        select(UploadedFile).where(
+            UploadedFile.id == upload_id,
+            UploadedFile.user_id == user_id,
+        )
+    )
+    upload = result.scalar_one_or_none()
+    if not upload:
+        raise HTTPException(status_code=404, detail="Upload not found")
+
+    # Fetch all candidates for this upload
+    candidates_result = await db.execute(
+        select(DedupCandidate).where(
+            DedupCandidate.source_upload_id == upload_id,
+        )
+    )
+    candidates = candidates_result.scalars().all()
+
+    auto_merged = []
+    needs_review: dict[str, list] = {}
+
+    for c in candidates:
+        rec_a = await db.get(HealthRecord, c.record_a_id)
+        rec_b = await db.get(HealthRecord, c.record_b_id)
+        if not rec_a or not rec_b:
+            continue
+
+        entry = {
+            "candidate_id": str(c.id),
+            "primary": {
+                "id": str(rec_a.id),
+                "display_text": rec_a.display_text or "",
+                "record_type": rec_a.record_type,
+                "fhir_resource": rec_a.fhir_resource,
+            },
+            "secondary": {
+                "id": str(rec_b.id),
+                "display_text": rec_b.display_text or "",
+                "record_type": rec_b.record_type,
+                "fhir_resource": rec_b.fhir_resource,
+            },
+            "similarity_score": c.similarity_score,
+            "llm_classification": c.llm_classification,
+            "llm_confidence": c.llm_confidence,
+            "llm_explanation": c.llm_explanation,
+            "field_diff": c.field_diff,
+            "merged_at": c.resolved_at.isoformat() if c.resolved_at else None,
+        }
+
+        if c.status == "merged" and c.auto_resolved:
+            auto_merged.append(entry)
+        elif c.status == "pending":
+            rtype = rec_a.record_type
+            needs_review.setdefault(rtype, []).append(entry)
+
+    await log_audit_event(
+        db,
+        user_id=user_id,
+        action="upload.review.view",
+        resource_type="uploaded_file",
+        resource_id=upload_id,
+    )
+
+    return {
+        "upload": {
+            "id": str(upload.id),
+            "filename": upload.filename,
+            "uploaded_at": upload.created_at.isoformat() if upload.created_at else None,
+            "record_count": upload.record_count,
+            "status": upload.ingestion_status,
+            "dedup_summary": upload.dedup_summary,
+        },
+        "auto_merged": auto_merged,
+        "needs_review": needs_review,
+    }
+
+
+@router.post("/{upload_id}/review/resolve")
+async def resolve_review(
+    upload_id: UUID,
+    body: dict,
+    user_id: UUID = Depends(get_authenticated_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bulk resolve dedup candidates for an upload."""
+    from app.models.deduplication import DedupCandidate
+    from app.models.provenance import Provenance
+    from app.services.dedup.field_merger import apply_field_update
+
+    result = await db.execute(
+        select(UploadedFile).where(
+            UploadedFile.id == upload_id,
+            UploadedFile.user_id == user_id,
+        )
+    )
+    upload = result.scalar_one_or_none()
+    if not upload:
+        raise HTTPException(status_code=404, detail="Upload not found")
+
+    resolutions = body.get("resolutions", [])
+    resolved_count = 0
+
+    for resolution in resolutions:
+        candidate_id = UUID(resolution["candidate_id"])
+        action = resolution["action"]
+        field_overrides = resolution.get("field_overrides")
+
+        candidate = await db.get(DedupCandidate, candidate_id)
+        if not candidate or candidate.source_upload_id != upload_id:
+            continue
+
+        rec_a = await db.get(HealthRecord, candidate.record_a_id)
+        rec_b = await db.get(HealthRecord, candidate.record_b_id)
+        if not rec_a or not rec_b:
+            continue
+
+        now = datetime.now(timezone.utc)
+
+        if action == "merge":
+            rec_b.is_duplicate = True
+            rec_b.merged_into_id = rec_a.id
+            rec_b.merge_metadata = {
+                "merged_from": str(rec_b.id),
+                "merged_at": now.isoformat(),
+                "merge_type": "duplicate",
+                "source_upload_id": str(upload_id),
+            }
+            candidate.status = "merged"
+            candidate.resolved_by = user_id
+            candidate.resolved_at = now
+            db.add(Provenance(
+                record_id=rec_a.id,
+                action="merge",
+                agent=f"user/{user_id}",
+                source_file_id=upload_id,
+                details={"merged_record_id": str(rec_b.id), "action": "merge"},
+            ))
+
+        elif action == "update":
+            merge_result = apply_field_update(rec_a, rec_b, field_overrides)
+            rec_a.fhir_resource = merge_result["updated_resource"]
+            rec_a.display_text = merge_result["display_text"]
+            rec_a.merge_metadata = merge_result["merge_metadata"]
+            rec_b.is_duplicate = True
+            rec_b.merged_into_id = rec_a.id
+            candidate.status = "merged"
+            candidate.resolved_by = user_id
+            candidate.resolved_at = now
+            db.add(Provenance(
+                record_id=rec_a.id,
+                action="field_update",
+                agent=f"user/{user_id}",
+                source_file_id=upload_id,
+                details={
+                    "merged_record_id": str(rec_b.id),
+                    "fields_updated": merge_result["merge_metadata"].get("fields_updated", []),
+                },
+            ))
+
+        elif action in ("dismiss", "keep_both"):
+            candidate.status = "dismissed"
+            candidate.resolved_by = user_id
+            candidate.resolved_at = now
+
+        resolved_count += 1
+
+    # Check if all candidates are resolved
+    pending_result = await db.execute(
+        select(DedupCandidate).where(
+            DedupCandidate.source_upload_id == upload_id,
+            DedupCandidate.status == "pending",
+        )
+    )
+    remaining = pending_result.scalars().all()
+    if not remaining:
+        upload.ingestion_status = "completed"
+
+    await db.commit()
+
+    await log_audit_event(
+        db,
+        user_id=user_id,
+        action="upload.review.resolve",
+        resource_type="uploaded_file",
+        resource_id=upload_id,
+        details={"resolutions_count": resolved_count},
+    )
+
+    return {"resolved": resolved_count, "remaining": len(remaining)}
+
+
+@router.post("/{upload_id}/review/undo-merge")
+async def undo_merge(
+    upload_id: UUID,
+    body: dict,
+    user_id: UUID = Depends(get_authenticated_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Undo an auto-merged dedup candidate."""
+    from app.models.deduplication import DedupCandidate
+    from app.services.dedup.field_merger import revert_field_update
+
+    result = await db.execute(
+        select(UploadedFile).where(
+            UploadedFile.id == upload_id,
+            UploadedFile.user_id == user_id,
+        )
+    )
+    upload = result.scalar_one_or_none()
+    if not upload:
+        raise HTTPException(status_code=404, detail="Upload not found")
+
+    candidate_id = UUID(body["candidate_id"])
+    candidate = await db.get(DedupCandidate, candidate_id)
+    if not candidate or candidate.source_upload_id != upload_id:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    if candidate.status != "merged":
+        raise HTTPException(status_code=400, detail="Candidate is not merged")
+
+    # Restore secondary record
+    rec_b = await db.get(HealthRecord, candidate.record_b_id)
+    if rec_b:
+        rec_b.is_duplicate = False
+        rec_b.merged_into_id = None
+
+    # Revert field changes on primary if this was a field update
+    rec_a = await db.get(HealthRecord, candidate.record_a_id)
+    if rec_a and rec_a.merge_metadata and rec_a.merge_metadata.get("previous_values"):
+        revert_field_update(rec_a)
+
+    # Reset candidate
+    candidate.status = "pending"
+    candidate.resolved_by = None
+    candidate.resolved_at = None
+
+    # Update upload status if needed
+    if upload.ingestion_status == "completed":
+        upload.ingestion_status = "awaiting_review"
+
+    await db.commit()
+
+    await log_audit_event(
+        db,
+        user_id=user_id,
+        action="upload.review.undo",
+        resource_type="uploaded_file",
+        resource_id=upload_id,
+        details={"candidate_id": str(candidate_id)},
+    )
+
+    return {"status": "undone", "candidate_id": str(candidate_id)}
