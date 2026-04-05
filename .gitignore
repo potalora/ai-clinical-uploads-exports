@@ -95,3 +95,6 @@ backend/data/
 
 # Git worktrees
 .worktrees/
+
+# Superpowers brainstorm sessions
+.superpowers/
