@@ -109,23 +109,7 @@ async def ingest_file(
         else:
             raise ValueError(f"Unsupported file type: {file_type}")
 
-        # Run dedup scan on newly inserted records
-        from app.services.dedup.orchestrator import run_upload_dedup
-        upload.ingestion_status = "dedup_scanning"
-        await db.commit()
-
-        dedup_summary = await run_upload_dedup(
-            upload.id, patient.id, user_id, db
-        )
-        upload.dedup_summary = dedup_summary.to_dict()
-
-        if dedup_summary.needs_review > 0:
-            upload.ingestion_status = "awaiting_review"
-        elif dedup_summary.auto_merged > 0:
-            upload.ingestion_status = "completed_with_merges"
-        else:
-            upload.ingestion_status = "completed"
-
+        upload.ingestion_status = "completed"
         upload.record_count = stats.get("records_inserted", 0)
         upload.ingestion_errors = stats.get("errors", [])
         upload.processing_completed_at = datetime.now(timezone.utc)
