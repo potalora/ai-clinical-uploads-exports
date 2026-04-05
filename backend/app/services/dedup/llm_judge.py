@@ -13,6 +13,18 @@ logger = logging.getLogger(__name__)
 
 VALID_CLASSIFICATIONS = {"duplicate", "update", "related", "distinct"}
 
+# Patient-level fields that must never be sent to LLM
+_STRIP_FIELDS = {
+    "subject", "patient", "performer", "author", "recorder",
+    "requester", "asserter", "participant", "informant",
+    "text",  # narrative may contain names
+}
+
+
+def _strip_patient_fields(resource: dict) -> dict:
+    """Remove patient-identifying fields from a FHIR resource before LLM judgment."""
+    return {k: v for k, v in resource.items() if k not in _STRIP_FIELDS}
+
 _JUDGE_PROMPT = """\
 You are a clinical record deduplication judge. Given two FHIR resources of the same \
 type, classify their relationship.
@@ -57,7 +69,7 @@ class JudgmentResult:
             classification = "related"
         return cls(
             classification=classification,
-            confidence=data.get("confidence", 0.5),
+            confidence=max(0.0, min(1.0, data.get("confidence", 0.5))),
             explanation=data.get("explanation", ""),
             field_diff=data.get("field_diff"),
         )
@@ -88,8 +100,8 @@ async def judge_candidate_pair(
         content = (
             f"{_JUDGE_PROMPT}\n\n"
             f"Record type: {record_type}\n\n"
-            f"Record A:\n{json.dumps(fhir_a, indent=2)}\n\n"
-            f"Record B:\n{json.dumps(fhir_b, indent=2)}"
+            f"Record A:\n{json.dumps(_strip_patient_fields(fhir_a), indent=2)}\n\n"
+            f"Record B:\n{json.dumps(_strip_patient_fields(fhir_b), indent=2)}"
         )
         response = await client.aio.models.generate_content(
             model=settings.gemini_model,

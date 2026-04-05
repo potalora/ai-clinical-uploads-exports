@@ -103,6 +103,33 @@ class TestJudgeCandidatePair:
         assert result.confidence == 0.88
 
     @pytest.mark.asyncio
+    async def test_judge_strips_patient_fields(self):
+        """Verify patient-identifying fields are stripped before sending to LLM."""
+        fhir_with_patient = {
+            "resourceType": "Condition",
+            "code": {"text": "Hypertension"},
+            "subject": {"reference": "Patient/123", "display": "John Doe"},
+            "recorder": {"reference": "Practitioner/456"},
+            "text": {"div": "<div>Patient John Doe has hypertension</div>"},
+        }
+
+        mock_response = MagicMock()
+        mock_response.text = json.dumps(MOCK_LLM_DUPLICATE)
+
+        mock_client = MagicMock()
+        mock_client.aio.models.generate_content = AsyncMock(return_value=mock_response)
+
+        with patch("app.services.dedup.llm_judge.genai.Client", return_value=mock_client):
+            await judge_candidate_pair(fhir_with_patient, fhir_with_patient, "condition", "fake-key")
+
+        # Verify the content sent to Gemini does not contain patient fields
+        call_args = mock_client.aio.models.generate_content.call_args
+        content_sent = call_args.kwargs.get("contents") or call_args.args[0] if call_args.args else ""
+        # Check by keyword arg name - the content is passed as 'contents' kwarg
+        assert "John Doe" not in str(content_sent)
+        assert "Patient/123" not in str(content_sent)
+
+    @pytest.mark.asyncio
     async def test_judge_handles_api_error(self):
         mock_client = MagicMock()
         mock_client.aio.models.generate_content = AsyncMock(side_effect=Exception("API error"))
