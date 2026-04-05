@@ -11,13 +11,20 @@ logger = logging.getLogger(__name__)
 
 # Map LangExtract entity classes to FHIR record types
 ENTITY_TO_RECORD_TYPE: dict[str, tuple[str, str] | None] = {
+    # Existing
     "medication": ("medication", "MedicationRequest"),
     "condition": ("condition", "Condition"),
     "lab_result": ("observation", "Observation"),
     "vital": ("observation", "Observation"),
     "procedure": ("procedure", "Procedure"),
     "allergy": ("allergy", "AllergyIntolerance"),
-    # Non-storable types
+    # New
+    "encounter": ("encounter", "Encounter"),
+    "imaging_result": ("diagnostic_report", "DiagnosticReport"),
+    "family_history": ("family_history", "FamilyMemberHistory"),
+    "assessment_plan": ("document", "DocumentReference"),
+    "social_history": ("observation", "Observation"),
+    # Non-storable types (return None)
     "provider": None,
     "dosage": None,
     "route": None,
@@ -142,6 +149,11 @@ def _build_fhir_resource(entity: ExtractedEntity, resource_type: str) -> dict:
                         pass
                 if ref_range:
                     resource["referenceRange"] = [ref_range]
+        elif entity.entity_class == "social_history":
+            category_label = attrs.get("category", "social-history")
+            resource["category"] = [{"coding": [{"code": "social-history"}]}]
+            resource["code"] = {"text": category_label.replace("_", " ").title()}
+            resource["valueString"] = attrs.get("value", entity.text)
         else:
             # vital
             resource["category"] = [{"coding": [{"code": "vital-signs"}]}]
@@ -159,6 +171,80 @@ def _build_fhir_resource(entity: ExtractedEntity, resource_type: str) -> dict:
         resource["code"] = {"text": entity.text}
         if "reaction" in attrs:
             resource["reaction"] = [{"manifestation": [{"text": attrs["reaction"]}]}]
+
+    elif resource_type == "Encounter":
+        visit_type = attrs.get("visit_type", "office")
+        class_map = {
+            "office": ("AMB", "ambulatory"),
+            "telehealth": ("VR", "virtual"),
+            "emergency": ("EMER", "emergency"),
+            "inpatient": ("IMP", "inpatient encounter"),
+        }
+        class_code, class_display = class_map.get(visit_type, ("AMB", "ambulatory"))
+        resource["status"] = "finished"
+        resource["class"] = {"code": class_code, "display": class_display}
+        cpt_code = attrs.get("cpt_code")
+        if cpt_code:
+            resource["type"] = [{"coding": [{"system": "http://www.ama-assn.org/go/cpt", "code": cpt_code}]}]
+        reason = attrs.get("reason")
+        if reason:
+            resource["reasonCode"] = [{"text": reason}]
+        date_val = attrs.get("date")
+        if date_val:
+            resource["period"] = {"start": date_val}
+
+    elif resource_type == "DiagnosticReport":
+        category = attrs.get("category", "imaging")
+        resource["status"] = "final"
+        resource["category"] = [{"coding": [{"code": category, "display": category.replace("_", " ").title()}]}]
+        resource["code"] = {"text": attrs.get("procedure_name", entity.text)}
+        findings = attrs.get("findings")
+        if findings:
+            resource["conclusion"] = findings
+        interpretation = attrs.get("interpretation")
+        if interpretation:
+            resource["conclusionCode"] = [{"text": interpretation}]
+
+    elif resource_type == "FamilyMemberHistory":
+        relationship = attrs.get("relationship", "unknown")
+        rel_map = {
+            "mother": ("MTH", "Mother"),
+            "father": ("FTH", "Father"),
+            "sibling": ("SIB", "Sibling"),
+            "sister": ("SIS", "Sister"),
+            "brother": ("BRO", "Brother"),
+            "grandmother": ("GRMTH", "Grandmother"),
+            "grandfather": ("GRFTH", "Grandfather"),
+            "grandparent": ("GRPRN", "Grandparent"),
+            "aunt": ("AUNT", "Aunt"),
+            "uncle": ("UNCLE", "Uncle"),
+            "child": ("CHILD", "Child"),
+        }
+        rel_code, rel_display = rel_map.get(relationship.lower(), ("FAMMEMB", relationship.title()))
+        resource["status"] = "completed"
+        resource["relationship"] = {
+            "coding": [{"system": "http://terminology.hl7.org/CodeSystem/v3-RoleCode", "code": rel_code, "display": rel_display}],
+        }
+        condition_text = attrs.get("condition", entity.text)
+        condition_entry: dict = {"code": {"text": condition_text}}
+        notes = attrs.get("notes")
+        if notes:
+            condition_entry["note"] = [{"text": notes}]
+        resource["condition"] = [condition_entry]
+
+    elif resource_type == "DocumentReference":
+        import base64
+        resource["status"] = "current"
+        resource["type"] = {"coding": [{"system": "http://loinc.org", "code": "51847-2", "display": "Assessment and Plan"}]}
+        resource["content"] = [{
+            "attachment": {
+                "contentType": "text/plain",
+                "data": base64.b64encode(entity.text.encode()).decode(),
+            },
+        }]
+        plan_items = attrs.get("plan_items")
+        if plan_items and isinstance(plan_items, list):
+            resource["description"] = "; ".join(plan_items)
 
     # Store extraction metadata
     resource["_extraction_metadata"] = {
@@ -210,5 +296,30 @@ def _build_display_text(entity: ExtractedEntity) -> str:
         if reaction:
             return f"{entity.text} — {reaction}"
         return entity.text
+
+    if cls == "encounter":
+        visit_type = attrs.get("visit_type", "visit")
+        date = attrs.get("date", "")
+        return f"{visit_type.title()} encounter{' — ' + date if date else ''}"
+
+    if cls == "imaging_result":
+        name = attrs.get("procedure_name", entity.text)
+        findings = attrs.get("findings", "")
+        return f"{name}: {findings}" if findings else name
+
+    if cls == "family_history":
+        rel = attrs.get("relationship", "Family member")
+        condition = attrs.get("condition", entity.text)
+        return f"{rel.title()}: {condition}"
+
+    if cls == "assessment_plan":
+        plan_items = attrs.get("plan_items", [])
+        count = len(plan_items) if isinstance(plan_items, list) else 0
+        return f"Assessment & Plan ({count} items)" if count else "Assessment & Plan"
+
+    if cls == "social_history":
+        category = attrs.get("category", "Social")
+        value = attrs.get("value", entity.text)
+        return f"{category.replace('_', ' ').title()}: {value}"
 
     return entity.text

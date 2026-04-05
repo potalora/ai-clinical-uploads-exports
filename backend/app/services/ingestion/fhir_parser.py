@@ -208,6 +208,13 @@ def build_display_text(resource: dict, resource_type: str) -> str:
             return dosage[0].get("text", "Medication")
         return "Medication Request"
 
+    if resource_type == "DiagnosticReport":
+        conclusion = resource.get("conclusion")
+        if conclusion:
+            code_text = code_obj.get("text", "Diagnostic Report") if code_obj else "Diagnostic Report"
+            return f"{code_text}: {conclusion[:100]}"
+        return "Diagnostic Report"
+
     if resource_type == "DocumentReference":
         desc = resource.get("description")
         if desc:
