@@ -644,7 +644,23 @@ async def _process_unstructured(upload_id: UUID, file_path: Path, user_id: UUID)
                             db.add(xref)
 
                 await db.commit()
-                upload.ingestion_status = "completed"
+
+                # Run dedup scan on newly created records
+                from app.services.dedup.orchestrator import run_upload_dedup
+                upload.ingestion_status = "dedup_scanning"
+                await db.commit()
+
+                dedup_summary = await run_upload_dedup(
+                    upload_id, patient.id, user_id, db
+                )
+                upload.dedup_summary = dedup_summary.to_dict()
+
+                if dedup_summary.needs_review > 0:
+                    upload.ingestion_status = "awaiting_review"
+                elif dedup_summary.auto_merged > 0:
+                    upload.ingestion_status = "completed_with_merges"
+                else:
+                    upload.ingestion_status = "completed"
                 upload.record_count = len(created_records)
             else:
                 # No patient found — fall back to manual confirmation
@@ -910,7 +926,24 @@ async def confirm_extraction(
         db.add(health_record)
         created_count += 1
 
-    upload.ingestion_status = "completed"
+    await db.commit()
+
+    # Run dedup on confirmed records
+    from app.services.dedup.orchestrator import run_upload_dedup
+    upload.ingestion_status = "dedup_scanning"
+    await db.commit()
+
+    dedup_summary = await run_upload_dedup(
+        upload_id, patient_uuid, user_id, db
+    )
+    upload.dedup_summary = dedup_summary.to_dict()
+
+    if dedup_summary.needs_review > 0:
+        upload.ingestion_status = "awaiting_review"
+    elif dedup_summary.auto_merged > 0:
+        upload.ingestion_status = "completed_with_merges"
+    else:
+        upload.ingestion_status = "completed"
     upload.record_count = created_count
     upload.processing_completed_at = datetime.now(timezone.utc)
     await db.commit()
