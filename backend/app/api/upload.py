@@ -620,8 +620,8 @@ async def _process_unstructured(upload_id: UUID, file_path: Path, user_id: UUID)
                 non_ap_records = [(r, e) for r, e in created_records if e.entity_class != "assessment_plan"]
                 if ap_records and non_ap_records:
                     from app.models.cross_reference import RecordCrossReference
+                    await db.flush()  # Ensure all record IDs are assigned
                     for ap_record, _ in ap_records:
-                        await db.flush()  # Ensure ap_record.id is set
                         for other_record, other_entity in non_ap_records:
                             if other_entity.entity_class in ("encounter",):
                                 continue  # Don't cross-ref the encounter itself
