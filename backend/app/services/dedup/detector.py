@@ -93,6 +93,106 @@ async def detect_duplicates(
     return candidates_found
 
 
+async def detect_upload_duplicates(
+    db: AsyncSession,
+    upload_id: UUID,
+    patient_id: UUID,
+    user_id: UUID,
+) -> tuple[list[dict], list[dict]]:
+    """Detect duplicates scoped to a specific upload.
+
+    Compares records from this upload against all other records for the patient.
+    Returns (auto_merged, needs_llm_review) — two lists of candidate dicts.
+    auto_merged: score >= 0.95
+    needs_llm_review: score 0.5–0.95
+    """
+    # Fetch records from this upload
+    new_result = await db.execute(
+        select(HealthRecord)
+        .where(
+            HealthRecord.user_id == user_id,
+            HealthRecord.patient_id == patient_id,
+            HealthRecord.source_file_id == upload_id,
+            HealthRecord.deleted_at.is_(None),
+            HealthRecord.is_duplicate.is_(False),
+        )
+    )
+    new_records = new_result.scalars().all()
+
+    if not new_records:
+        return [], []
+
+    # Fetch existing records (from other uploads)
+    existing_result = await db.execute(
+        select(HealthRecord)
+        .where(
+            HealthRecord.user_id == user_id,
+            HealthRecord.patient_id == patient_id,
+            HealthRecord.source_file_id != upload_id,
+            HealthRecord.deleted_at.is_(None),
+            HealthRecord.is_duplicate.is_(False),
+        )
+    )
+    existing_records = existing_result.scalars().all()
+
+    if not existing_records:
+        return [], []
+
+    # Pre-load existing candidate pairs
+    existing_pairs_result = await db.execute(
+        select(DedupCandidate.record_a_id, DedupCandidate.record_b_id)
+    )
+    existing_pairs: set[tuple[UUID, UUID]] = set()
+    for r in existing_pairs_result.all():
+        existing_pairs.add((r[0], r[1]))
+        existing_pairs.add((r[1], r[0]))
+
+    # Build lookup by (record_type, code/text) for existing records
+    existing_buckets: dict[tuple, list[HealthRecord]] = {}
+    for r in existing_records:
+        key = (r.record_type, (r.code_value or (r.display_text or "")[:50].lower()))
+        existing_buckets.setdefault(key, []).append(r)
+
+    auto_merged: list[dict] = []
+    needs_llm_review: list[dict] = []
+
+    for new_rec in new_records:
+        key = (new_rec.record_type, (new_rec.code_value or (new_rec.display_text or "")[:50].lower()))
+        bucket = existing_buckets.get(key, [])
+
+        for existing_rec in bucket:
+            if (new_rec.id, existing_rec.id) in existing_pairs:
+                continue
+
+            score, reasons = _compare_records(new_rec, existing_rec)
+            if score < 0.5:
+                continue
+
+            candidate = {
+                "id": uuid4(),
+                "record_a_id": existing_rec.id,
+                "record_b_id": new_rec.id,
+                "similarity_score": score,
+                "match_reasons": reasons,
+                "status": "pending",
+                "source_upload_id": upload_id,
+            }
+
+            if score >= 0.95:
+                auto_merged.append(candidate)
+            else:
+                needs_llm_review.append(candidate)
+
+            existing_pairs.add((new_rec.id, existing_rec.id))
+            existing_pairs.add((existing_rec.id, new_rec.id))
+
+    logger.info(
+        "Upload %s: %d auto-merged, %d need LLM review",
+        upload_id, len(auto_merged), len(needs_llm_review),
+    )
+    return auto_merged, needs_llm_review
+
+
 def _compare_records(a: HealthRecord, b: HealthRecord) -> tuple[float, dict]:
     """Compare two records for similarity.
 
@@ -131,6 +231,15 @@ def _compare_records(a: HealthRecord, b: HealthRecord) -> tuple[float, dict]:
     if a.source_format != b.source_format:
         score += 0.1
         reasons["cross_source"] = True
+
+    # Source section match bonus
+    if (
+        getattr(a, "source_section", None)
+        and getattr(b, "source_section", None)
+        and a.source_section == b.source_section
+    ):
+        score += 0.15
+        reasons["section_match"] = True
 
     return min(score, 1.0), reasons
 
