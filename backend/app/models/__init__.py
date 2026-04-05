@@ -9,6 +9,7 @@ from app.models.deduplication import DedupCandidate
 from app.models.provenance import Provenance
 from app.models.audit import AuditLog
 from app.models.token_blacklist import RevokedToken
+from app.models.cross_reference import RecordCrossReference
 
 __all__ = [
     "User",
@@ -20,4 +21,5 @@ __all__ = [
     "Provenance",
     "AuditLog",
     "RevokedToken",
+    "RecordCrossReference",
 ]

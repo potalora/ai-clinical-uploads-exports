@@ -39,3 +39,6 @@ class UploadedFile(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     extracted_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     extraction_entities: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    extraction_sections: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    document_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    dedup_summary: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
