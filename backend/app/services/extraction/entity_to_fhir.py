@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import logging
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
@@ -233,7 +234,6 @@ def _build_fhir_resource(entity: ExtractedEntity, resource_type: str) -> dict:
         resource["condition"] = [condition_entry]
 
     elif resource_type == "DocumentReference":
-        import base64
         resource["status"] = "current"
         resource["type"] = {"coding": [{"system": "http://loinc.org", "code": "51847-2", "display": "Assessment and Plan"}]}
         resource["content"] = [{
