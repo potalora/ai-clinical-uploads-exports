@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -27,4 +27,12 @@ class DedupCandidate(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     resolved_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    llm_classification: Mapped[str | None] = mapped_column(Text, nullable=True)
+    llm_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    llm_explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    field_diff: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    auto_resolved: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    source_upload_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("uploaded_files.id"), nullable=True
     )
