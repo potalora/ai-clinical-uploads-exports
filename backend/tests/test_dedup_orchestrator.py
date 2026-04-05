@@ -10,6 +10,7 @@ from app.services.dedup.detector import (
     _compare_records,
     _fuzzy_match,
 )
+from app.services.dedup.orchestrator import run_upload_dedup, DedupSummary
 
 
 class FakeRecord:
@@ -85,3 +86,146 @@ class TestCompareRecordsUpgraded:
         score, reasons = _compare_records(a, b)
         assert score >= 0.5  # 0.4 + 0.1
         assert reasons.get("cross_source") is True
+
+
+class TestRunUploadDedup:
+    """Tests for the full dedup orchestration flow."""
+
+    @pytest.mark.asyncio
+    async def test_no_candidates_returns_empty_summary(self):
+        mock_db = AsyncMock()
+        with patch(
+            "app.services.dedup.orchestrator.detect_upload_duplicates",
+            new_callable=AsyncMock,
+            return_value=([], []),
+        ):
+            summary = await run_upload_dedup(uuid4(), uuid4(), uuid4(), mock_db)
+
+        assert isinstance(summary, DedupSummary)
+        assert summary.total_candidates == 0
+        assert summary.auto_merged == 0
+        assert summary.needs_review == 0
+
+    @pytest.mark.asyncio
+    async def test_auto_merge_exact_matches(self):
+        mock_db = AsyncMock()
+        auto_candidates = [
+            {"id": uuid4(), "record_a_id": uuid4(), "record_b_id": uuid4(),
+             "similarity_score": 0.98, "match_reasons": {"code_match": True, "text_exact_match": True},
+             "status": "pending", "source_upload_id": uuid4()},
+        ]
+
+        with patch(
+            "app.services.dedup.orchestrator.detect_upload_duplicates",
+            new_callable=AsyncMock,
+            return_value=(auto_candidates, []),
+        ), patch(
+            "app.services.dedup.orchestrator._apply_auto_merges",
+            new_callable=AsyncMock,
+        ) as mock_apply:
+            summary = await run_upload_dedup(uuid4(), uuid4(), uuid4(), mock_db)
+
+        assert summary.auto_merged == 1
+        assert summary.needs_review == 0
+        mock_apply.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_llm_judge_called_for_fuzzy_matches(self):
+        mock_db = AsyncMock()
+        fuzzy_candidates = [
+            {"id": uuid4(), "record_a_id": uuid4(), "record_b_id": uuid4(),
+             "similarity_score": 0.72, "match_reasons": {"code_match": True, "text_fuzzy_match": True},
+             "status": "pending", "source_upload_id": uuid4()},
+        ]
+
+        mock_judgment = MagicMock()
+        mock_judgment.classification = "update"
+        mock_judgment.confidence = 0.85
+        mock_judgment.explanation = "Dose changed"
+        mock_judgment.field_diff = {"dosageInstruction": {"old": "500mg", "new": "1000mg"}}
+
+        with patch(
+            "app.services.dedup.orchestrator.detect_upload_duplicates",
+            new_callable=AsyncMock,
+            return_value=([], fuzzy_candidates),
+        ), patch(
+            "app.services.dedup.orchestrator._run_llm_judge",
+            new_callable=AsyncMock,
+            return_value=[mock_judgment],
+        ), patch(
+            "app.services.dedup.orchestrator._save_candidates",
+            new_callable=AsyncMock,
+        ):
+            summary = await run_upload_dedup(uuid4(), uuid4(), uuid4(), mock_db)
+
+        assert summary.needs_review == 1
+
+    @pytest.mark.asyncio
+    async def test_llm_duplicate_auto_merges(self):
+        """LLM judge returning 'duplicate' with high confidence auto-merges."""
+        mock_db = AsyncMock()
+        fuzzy_candidates = [
+            {"id": uuid4(), "record_a_id": uuid4(), "record_b_id": uuid4(),
+             "similarity_score": 0.72, "match_reasons": {}, "status": "pending",
+             "source_upload_id": uuid4()},
+        ]
+
+        mock_judgment = MagicMock()
+        mock_judgment.classification = "duplicate"
+        mock_judgment.confidence = 0.9
+        mock_judgment.explanation = "Same record"
+        mock_judgment.field_diff = None
+
+        with patch(
+            "app.services.dedup.orchestrator.detect_upload_duplicates",
+            new_callable=AsyncMock,
+            return_value=([], fuzzy_candidates),
+        ), patch(
+            "app.services.dedup.orchestrator._run_llm_judge",
+            new_callable=AsyncMock,
+            return_value=[mock_judgment],
+        ), patch(
+            "app.services.dedup.orchestrator._apply_auto_merges",
+            new_callable=AsyncMock,
+        ) as mock_apply, patch(
+            "app.services.dedup.orchestrator._save_candidates",
+            new_callable=AsyncMock,
+        ):
+            summary = await run_upload_dedup(uuid4(), uuid4(), uuid4(), mock_db)
+
+        assert summary.auto_merged == 1
+        mock_apply.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_llm_distinct_auto_dismisses(self):
+        """LLM judge returning 'distinct' with high confidence auto-dismisses."""
+        mock_db = AsyncMock()
+        fuzzy_candidates = [
+            {"id": uuid4(), "record_a_id": uuid4(), "record_b_id": uuid4(),
+             "similarity_score": 0.55, "match_reasons": {}, "status": "pending",
+             "source_upload_id": uuid4()},
+        ]
+
+        mock_judgment = MagicMock()
+        mock_judgment.classification = "distinct"
+        mock_judgment.confidence = 0.92
+        mock_judgment.explanation = "Different concepts"
+        mock_judgment.field_diff = None
+
+        with patch(
+            "app.services.dedup.orchestrator.detect_upload_duplicates",
+            new_callable=AsyncMock,
+            return_value=([], fuzzy_candidates),
+        ), patch(
+            "app.services.dedup.orchestrator._run_llm_judge",
+            new_callable=AsyncMock,
+            return_value=[mock_judgment],
+        ), patch(
+            "app.services.dedup.orchestrator._save_candidates",
+            new_callable=AsyncMock,
+        ):
+            summary = await run_upload_dedup(uuid4(), uuid4(), uuid4(), mock_db)
+
+        assert summary.auto_merged == 0
+        assert summary.needs_review == 0
+        assert summary.dismissed == 1
