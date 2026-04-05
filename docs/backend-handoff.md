@@ -732,7 +732,163 @@ List stored AI responses (both pasted and API-generated).
 
 ---
 
+## Upload Review (Dedup)
+
+Per-upload dedup review. These endpoints let the user review auto-merged and pending dedup candidates for a specific upload, resolve them in bulk, or undo auto-merges.
+
+### GET `/upload/:id/review`
+
+Get dedup review data for an upload.
+
+**Response (200):**
+```json
+{
+  "upload": {
+    "id": "uuid",
+    "filename": "export.json",
+    "uploaded_at": "2026-04-05T10:00:00Z",
+    "record_count": 200,
+    "status": "awaiting_review",
+    "dedup_summary": {
+      "total_candidates": 15,
+      "auto_merged": 12,
+      "needs_review": 3,
+      "dismissed": 0,
+      "by_type": {
+        "medication": 5,
+        "condition": 7,
+        "observation": 3
+      }
+    }
+  },
+  "auto_merged": [
+    {
+      "candidate_id": "uuid",
+      "primary": {
+        "id": "uuid",
+        "display_text": "Metformin 500mg",
+        "record_type": "medication",
+        "fhir_resource": { "..." }
+      },
+      "secondary": {
+        "id": "uuid",
+        "display_text": "Metformin 500mg",
+        "record_type": "medication",
+        "fhir_resource": { "..." }
+      },
+      "similarity_score": 0.98,
+      "llm_classification": "duplicate",
+      "llm_confidence": 0.95,
+      "llm_explanation": "Same medication, same dose",
+      "merged_at": "2026-04-05T10:01:00Z"
+    }
+  ],
+  "needs_review": {
+    "medication": [
+      {
+        "candidate_id": "uuid",
+        "primary": {
+          "id": "uuid",
+          "display_text": "Metformin 500mg",
+          "record_type": "medication",
+          "fhir_resource": { "..." }
+        },
+        "secondary": {
+          "id": "uuid",
+          "display_text": "Metformin 1000mg",
+          "record_type": "medication",
+          "fhir_resource": { "..." }
+        },
+        "similarity_score": 0.72,
+        "llm_classification": "update",
+        "llm_confidence": 0.85,
+        "llm_explanation": "Same medication with dose increase from 500mg to 1000mg",
+        "field_diff": {
+          "dosageInstruction": { "old": "500mg daily", "new": "1000mg daily" }
+        }
+      }
+    ],
+    "condition": []
+  }
+}
+```
+
+**Notes:**
+- `auto_merged` contains candidates that were automatically resolved (heuristic score >= 0.95 or LLM duplicate with high confidence)
+- `needs_review` is keyed by `record_type` for category-grouped display
+- `field_diff` is present for `update` classifications — shows which FHIR fields changed
+- User-scoped: only returns data for uploads owned by the authenticated user
+
+### POST `/upload/:id/review/resolve`
+
+Bulk resolve dedup candidates.
+
+**Request:**
+```json
+{
+  "resolutions": [
+    { "candidate_id": "uuid", "action": "merge" },
+    { "candidate_id": "uuid", "action": "update", "field_overrides": ["clinicalStatus", "dosageInstruction"] },
+    { "candidate_id": "uuid", "action": "dismiss" },
+    { "candidate_id": "uuid", "action": "keep_both" }
+  ]
+}
+```
+
+**Actions:**
+| Action | Effect |
+|--------|--------|
+| `merge` | Keep primary, mark secondary as `is_duplicate=true` |
+| `update` | Apply selected fields from secondary to primary (all changed fields if `field_overrides` omitted), mark secondary as duplicate |
+| `dismiss` | Not a duplicate — set candidate status to `dismissed` |
+| `keep_both` | Related but distinct — set candidate status to `dismissed`, no record changes |
+
+**Response (200):**
+```json
+{
+  "resolved": 4,
+  "remaining": 0
+}
+```
+
+**Notes:**
+- When `remaining` reaches 0, upload status transitions to `completed`
+- All merge/update actions create provenance records
+- `update` with `field_overrides` enables cherry-picking specific FHIR fields to accept
+- Protected fields (`resourceType`, `_extraction_metadata`, `id`, `meta`) are never overwritten
+
+### POST `/upload/:id/review/undo-merge`
+
+Undo an auto-merged or manually merged candidate.
+
+**Request:**
+```json
+{
+  "candidate_id": "uuid"
+}
+```
+
+**Response (200):**
+```json
+{
+  "status": "undone",
+  "candidate_id": "uuid"
+}
+```
+
+**Errors:** `400` (candidate is not merged), `404` (candidate or upload not found)
+
+**Notes:**
+- Restores the secondary record (clears `is_duplicate`)
+- Reverts field changes on primary using stored `previous_values` from `merge_metadata`
+- Resets candidate status to `pending`
+- If upload was `completed`, transitions back to `awaiting_review`
+
+---
+
 ## Deduplication
+
+> **Note:** These are the legacy global dedup endpoints (Admin Console > Dedup tab). For per-upload dedup review, see [Upload Review](#upload-review-dedup) above.
 
 ### GET `/dedup/candidates`
 
