@@ -85,6 +85,7 @@ def _ensure_worker_running() -> None:
 
 from app.database import get_db
 from app.dependencies import get_authenticated_user_id
+from app.services.extraction.section_parser import parse_sections, split_large_section
 from app.middleware.audit import log_audit_event
 from app.models.record import HealthRecord
 from app.models.uploaded_file import UploadedFile
@@ -468,7 +469,11 @@ ALLOWED_UNSTRUCTURED = {".pdf", ".rtf", ".tif", ".tiff"}
 
 
 async def _process_unstructured(upload_id: UUID, file_path: Path, user_id: UUID) -> None:
-    """Background task: extract text then entities from an unstructured file."""
+    """Background task: extract text then entities from an unstructured file.
+
+    Uses section-aware extraction: Gemini parses document structure first,
+    then LangExtract runs per-section (respecting the 2000-char buffer).
+    """
     from app.database import async_session_factory
     from app.services.extraction.text_extractor import extract_text
     from app.services.extraction.entity_extractor import extract_entities_async
@@ -495,72 +500,155 @@ async def _process_unstructured(upload_id: UUID, file_path: Path, user_id: UUID)
             upload.extracted_text = text
             await db.commit()
 
-            # Step 2: Scrub PHI before entity extraction (C4) — local, no semaphore
+            # Step 2: Scrub PHI before entity extraction — local, no semaphore
             scrubbed_text, deident_report = scrub_phi(text)
 
-            # Step 3: Extract entities from scrubbed text (Gemini via LangExtract)
+            # Step 3: Section parsing (NEW)
             async with sem:
-                extraction = await extract_entities_async(
-                    scrubbed_text, upload.filename, settings.gemini_api_key
-                )
+                parsed_doc = await parse_sections(scrubbed_text, settings.gemini_api_key)
 
-            if extraction.error:
-                upload.ingestion_status = "failed"
-                # M2: Sanitize entity extraction error (include error_type for debugging)
-                upload.ingestion_errors = [{"error": "Entity extraction failed. Please retry or contact support.", "error_type": "EntityExtractionError"}]
-            else:
-                entities_json = [
-                    {
-                        "entity_class": e.entity_class,
-                        "text": e.text,
-                        "attributes": e.attributes,
-                        "start_pos": e.start_pos,
-                        "end_pos": e.end_pos,
-                        "confidence": e.confidence,
-                    }
-                    for e in extraction.entities
+            upload.extraction_sections = {
+                "sections": [
+                    {"type": s.section_type.value, "title": s.title, "char_range": s.char_range}
+                    for s in parsed_doc.sections
                 ]
-                upload.extraction_entities = entities_json
+            }
+            upload.document_metadata = {
+                "document_type": parsed_doc.document_type,
+                "primary_visit_date": parsed_doc.primary_visit_date,
+                "provider": parsed_doc.provider,
+                "facility": parsed_doc.facility,
+                "section_count": len(parsed_doc.sections),
+            }
+            await db.commit()
 
-                # Auto-confirm: look up user's first patient and create records
-                from app.models.patient import Patient
-                from app.services.extraction.entity_extractor import ExtractedEntity
-                from app.services.extraction.entity_to_fhir import entity_to_health_record_dict
+            # Step 4: Per-section entity extraction (replaces single extraction)
+            all_entities = []
+            extraction_tasks = []
 
-                patient_result = await db.execute(
-                    select(Patient)
-                    .where(Patient.user_id == user_id)
-                    .limit(1)
-                )
-                patient = patient_result.scalar_one_or_none()
+            for section in parsed_doc.sections:
+                chunks = split_large_section(section.text)
+                for chunk in chunks:
+                    extraction_tasks.append((chunk, section.section_type.value))
 
-                if patient:
-                    created_count = 0
-                    for entity_data in entities_json:
-                        entity = ExtractedEntity(
-                            entity_class=entity_data["entity_class"],
-                            text=entity_data["text"],
-                            attributes=entity_data["attributes"],
-                            start_pos=entity_data.get("start_pos"),
-                            end_pos=entity_data.get("end_pos"),
-                            confidence=entity_data.get("confidence", 0.8),
+            # Process up to 3 sections concurrently
+            section_sem = asyncio.Semaphore(3)
+
+            async def extract_chunk(text_chunk: str, section_type: str):
+                async with section_sem:
+                    async with sem:
+                        chunk_result = await extract_entities_async(
+                            text_chunk, upload.filename, settings.gemini_api_key
                         )
-                        record_dict = entity_to_health_record_dict(
-                            entity=entity,
-                            user_id=user_id,
-                            patient_id=patient.id,
-                            source_file_id=upload_id,
-                        )
-                        if record_dict is not None:
-                            health_record = HealthRecord(**record_dict)
-                            db.add(health_record)
-                            created_count += 1
+                return chunk_result, section_type
 
-                    upload.ingestion_status = "completed"
-                    upload.record_count = created_count
-                else:
-                    # No patient found — fall back to manual confirmation
-                    upload.ingestion_status = "awaiting_confirmation"
+            tasks = [extract_chunk(chunk, stype) for chunk, stype in extraction_tasks]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            for r in results:
+                if isinstance(r, Exception):
+                    logger.error("Section extraction failed: %s", r)
+                    continue
+                extraction_result, section_type = r
+                if extraction_result.error:
+                    logger.warning("Extraction error in section %s: %s", section_type, extraction_result.error)
+                    continue
+                for entity in extraction_result.entities:
+                    entity.attributes["_source_section"] = section_type
+                    all_entities.append(entity)
+
+            # Deduplicate entities within the same document (same text + same type)
+            seen = set()
+            unique_entities = []
+            for entity in all_entities:
+                key = (entity.entity_class, entity.text.strip().lower())
+                if key not in seen:
+                    seen.add(key)
+                    unique_entities.append(entity)
+
+            # Store entities on upload record
+            upload.extraction_entities = [
+                {
+                    "entity_class": e.entity_class,
+                    "text": e.text,
+                    "attributes": e.attributes,
+                    "start_pos": e.start_pos,
+                    "end_pos": e.end_pos,
+                    "confidence": e.confidence,
+                }
+                for e in unique_entities
+            ]
+            await db.commit()
+
+            # Step 5: Auto-confirm if patient exists (with encounter linking)
+            from app.models.patient import Patient
+            from app.services.extraction.entity_to_fhir import entity_to_health_record_dict
+
+            patient_result = await db.execute(
+                select(Patient).where(Patient.user_id == user_id).limit(1)
+            )
+            patient = patient_result.scalar_one_or_none()
+
+            if patient:
+                encounter_id = None
+                created_records = []
+
+                for entity in unique_entities:
+                    record_dict = entity_to_health_record_dict(
+                        entity, user_id, patient.id, upload_id
+                    )
+                    if record_dict is None:
+                        continue
+                    record_dict["source_section"] = entity.attributes.get("_source_section")
+                    record = HealthRecord(**record_dict)
+                    db.add(record)
+                    created_records.append((record, entity))
+
+                    # Track encounter ID for linking
+                    if entity.entity_class == "encounter":
+                        await db.flush()
+                        encounter_id = record.id
+
+                # Link all records to the encounter
+                if encounter_id:
+                    for record, _ in created_records:
+                        if record.id != encounter_id:
+                            record.linked_encounter_id = encounter_id
+
+                # Create cross-references from A&P DocumentReference to other records
+                ap_records = [(r, e) for r, e in created_records if e.entity_class == "assessment_plan"]
+                non_ap_records = [(r, e) for r, e in created_records if e.entity_class != "assessment_plan"]
+                if ap_records and non_ap_records:
+                    from app.models.cross_reference import RecordCrossReference
+                    await db.flush()  # Ensure all record IDs are assigned
+                    for ap_record, _ in ap_records:
+                        for other_record, other_entity in non_ap_records:
+                            if other_entity.entity_class in ("encounter",):
+                                continue  # Don't cross-ref the encounter itself
+                            ref_type = {
+                                "medication": "prescribes",
+                                "condition": "addresses",
+                                "lab_result": "supports",
+                                "vital": "supports",
+                                "procedure": "addresses",
+                                "allergy": "addresses",
+                                "imaging_result": "supports",
+                                "family_history": "supports",
+                                "social_history": "supports",
+                            }.get(other_entity.entity_class, "addresses")
+                            xref = RecordCrossReference(
+                                document_record_id=ap_record.id,
+                                referenced_record_id=other_record.id,
+                                reference_type=ref_type,
+                            )
+                            db.add(xref)
+
+                await db.commit()
+                upload.ingestion_status = "completed"
+                upload.record_count = len(created_records)
+            else:
+                # No patient found — fall back to manual confirmation
+                upload.ingestion_status = "awaiting_confirmation"
 
             upload.processing_completed_at = datetime.now(timezone.utc)
             await db.commit()
@@ -570,7 +658,7 @@ async def _process_unstructured(upload_id: UUID, file_path: Path, user_id: UUID)
             logger.error("Unstructured processing failed for %s: %s", upload_id, e, exc_info=True)
             error_type = type(e).__name__
             upload.ingestion_status = "failed"
-            upload.ingestion_errors = [{"error": f"Processing failed: {error_type}. Contact support if this persists.", "error_type": error_type}]
+            upload.ingestion_errors = [{"error": "Processing failed. Please retry or contact support.", "error_type": error_type}]
             upload.processing_completed_at = datetime.now(timezone.utc)
             await db.commit()
 

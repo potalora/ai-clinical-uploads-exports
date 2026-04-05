@@ -45,7 +45,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
     # Clean up any leftover data from prior runs (CASCADE handles FK deps)
     async with engine.begin() as conn:
         await conn.execute(text(
-            "TRUNCATE revoked_tokens, provenance, dedup_candidates, health_records, "
+            "TRUNCATE revoked_tokens, provenance, dedup_candidates, record_cross_references, health_records, "
             "ai_summary_prompts, uploaded_files, patients, audit_log, users CASCADE"
         ))
 
@@ -58,7 +58,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
     # Clean up all data after each test (CASCADE handles FK deps)
     async with engine.begin() as conn:
         await conn.execute(text(
-            "TRUNCATE revoked_tokens, provenance, dedup_candidates, health_records, "
+            "TRUNCATE revoked_tokens, provenance, dedup_candidates, record_cross_references, health_records, "
             "ai_summary_prompts, uploaded_files, patients, audit_log, users CASCADE"
         ))
 

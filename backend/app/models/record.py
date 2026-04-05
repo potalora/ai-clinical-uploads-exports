@@ -52,6 +52,11 @@ class HealthRecord(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     confidence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     ai_extracted: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    source_section: Mapped[str | None] = mapped_column(Text, nullable=True)
+    linked_encounter_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("health_records.id"), nullable=True
+    )
+    merge_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
