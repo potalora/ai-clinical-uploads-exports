@@ -11,7 +11,7 @@ AI is optional. Without an API key you still get record ingestion, a timeline, a
 
 ## What it does
 
-- Parses FHIR R4 JSON bundles, Epic EHI Tables (14 mappers), and CDA XML / IHE XDM packages into a normalized PostgreSQL schema
+- Parses FHIR R4 JSON bundles, Epic EHI Tables (14 mappers), standalone CDA XML documents, and IHE XDM packages into a normalized PostgreSQL schema
 - Extracts text from PDFs, RTFs, and TIFFs via Gemini vision API
 - Identifies clinical entities (meds, conditions, labs, vitals, procedures, allergies, providers) with confidence scores
 - Lets you review extracted entities before they become FHIR records
@@ -78,7 +78,7 @@ backend/
 │       ├── ai/            # prompt_builder, summarizer, phi_scrubber
 │       ├── extraction/    # text_extractor, entity_extractor, entity_to_fhir
 │       └── dedup/         # detector, llm_judge, orchestrator, field_merger
-├── tests/                 # 19 test files, ~307 tests
+├── tests/                 # 26 test files, ~517 tests
 └── alembic/               # migrations
 
 frontend/src/
@@ -158,7 +158,7 @@ python -m pytest -x -v --run-slow
 python -m pytest tests/test_hipaa_compliance.py -v
 ```
 
-~336 tests across 23 files covering auth, records, ingestion (all 14 Epic mappers + CDA XML / IHE XDM pipeline), extraction, summarization, dedup (heuristic + LLM judge + review API), HIPAA compliance, and fidelity checks for both Epic and FHIR imports.
+~517 tests across 26 files covering auth, records, ingestion (all 14 Epic mappers + standalone CDA XML + IHE XDM pipeline), extraction (text + entity + section parsing), summarization, dedup (heuristic + LLM judge + field merger + review API), HIPAA compliance, and fidelity checks for Epic, FHIR, and CDA imports.
 
 Tests hit a separate `medtimeline_test` database (auto-derived from `DATABASE_URL`). It needs to exist with pgcrypto enabled — see infrastructure step above.
 

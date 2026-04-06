@@ -303,7 +303,7 @@ Date-ordered event list for the Timeline pane. Lighter than `/records` — doesn
 
 Upload a file for ingestion. Accepts multipart form data.
 
-**Request:** `multipart/form-data` with field `file` (JSON or ZIP)
+**Request:** `multipart/form-data` with field `file` (JSON, XML, or ZIP)
 
 **Response (200):**
 ```json
@@ -319,10 +319,20 @@ Upload a file for ingestion. Accepts multipart form data.
 - For small files: process synchronously and return results immediately
 - For large files (>5s processing): return `202 Accepted` with `upload_id` and `status: "processing"`, then process in background
 - File size limit: 500MB per file, 5GB for Epic exports
-- Supported MIME types: `application/json`, `application/zip`
+- Supported MIME types: `application/json`, `application/zip`, `text/xml`, `application/xml`
 - Validate file integrity before processing
 
-#### CDA XML / IHE XDM Ingestion
+#### Standalone CDA XML Upload
+
+The upload endpoint auto-detects CDA XML documents (`.xml` files containing `<ClinicalDocument>` in the first 500 bytes). When detected:
+
+1. **CDA-to-FHIR conversion** -- The document is converted to FHIR R4 resources via `python-fhir-converter`
+2. **Bulk insertion** -- Records are inserted in configurable batches (default 100)
+3. **DB dedup** -- Standard upload-scoped dedup runs against existing database records
+
+No special endpoint needed -- uses the existing `POST /upload` endpoint.
+
+#### IHE XDM Package Ingestion
 
 The upload endpoint automatically detects IHE XDM packages (ZIP files containing `METADATA.XML`). When detected:
 
@@ -364,7 +374,7 @@ Poll for ingestion progress on large imports. Frontend polls every 2 seconds.
 }
 ```
 
-**Status values:** `pending`, `processing`, `completed`, `failed`, `partial`
+**Status values:** `pending`, `processing`, `dedup_scanning`, `completed`, `completed_with_merges`, `awaiting_review`, `failed`, `partial`
 
 **Frontend behavior:**
 - Polls while status is `pending` or `processing`
@@ -1018,7 +1028,7 @@ The frontend recognizes these `record_type` values and assigns distinct visual s
 | `diagnostic_report` | Diagnostic Reports | DIAG | DiagnosticReport |
 
 Additional types the frontend handles gracefully (with default styling):
-- `service_request`, `communication`, `appointment`, `care_plan`
+- `service_request`, `communication`, `appointment`, `care_plan`, `care_team`, `immunization_recommendation`, `questionnaire_response`, `family_member_history`
 
 Any unknown `record_type` values render with a neutral gray badge.
 
