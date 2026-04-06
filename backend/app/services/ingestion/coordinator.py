@@ -80,7 +80,7 @@ def _find_xdm_metadata(root_dir: Path) -> Path | None:
                 header = f.read(500)
                 if "SubmitObjectsRequest" in header:
                     return metadata_path
-        except Exception:
+        except (OSError, UnicodeDecodeError):
             continue
     return None
 
