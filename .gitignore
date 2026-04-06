@@ -41,10 +41,14 @@ testing_issue.md
 backend/tests/fixtures/user_provided_*
 backend/tests/fixtures/epic_export/
 backend/tests/fixtures/epic_export_sampled/
+backend/tests/fixtures/health_summary/
 
-# Original user data files (PHI)
+# Real health data (PHI — never commit)
+test_data/
 EhiExport-22259/
 Requested Record/
+HealthSummary*/
+note_*.pdf
 
 # Next.js
 frontend/.next/
