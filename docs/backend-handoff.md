@@ -322,6 +322,18 @@ Upload a file for ingestion. Accepts multipart form data.
 - Supported MIME types: `application/json`, `application/zip`
 - Validate file integrity before processing
 
+#### CDA XML / IHE XDM Ingestion
+
+The upload endpoint automatically detects IHE XDM packages (ZIP files containing `METADATA.XML`). When detected:
+
+1. **Manifest parsing** -- `METADATA.XML` provides document inventory, SHA-1 hashes, and patient demographics
+2. **Format prioritization** -- CDA XML documents are parsed for structured data; PDF/HTML files in the same package are skipped (logged as "structured preferred")
+3. **CDA-to-FHIR conversion** -- Each CDA XML document is converted to FHIR R4 resources via `python-fhir-converter`
+4. **Cross-document dedup** -- Identical records across multiple CDA documents (e.g., same allergy in 6 documents) are collapsed before insertion
+5. **DB dedup** -- Standard upload-scoped dedup runs against existing database records
+
+No new API endpoints -- uses the existing `POST /upload` endpoint. The coordinator auto-detects the format.
+
 ### GET `/upload/:id/status`
 
 Poll for ingestion progress on large imports. Frontend polls every 2 seconds.
