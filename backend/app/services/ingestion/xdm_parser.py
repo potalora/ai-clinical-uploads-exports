@@ -14,6 +14,12 @@ from lxml import etree
 
 logger = logging.getLogger(__name__)
 
+_SAFE_PARSER = etree.XMLParser(
+    resolve_entities=False,
+    no_network=True,
+    load_dtd=False,
+)
+
 # ebXML namespaces used in IHE XDM manifests.
 NS_RIM = "urn:oasis:names:tc:ebxml-regrep:xsd:rim:3.0"
 NS_LCM = "urn:oasis:names:tc:ebxml-regrep:xsd:lcm:3.0"
@@ -150,9 +156,9 @@ def parse_xdm_metadata(metadata_path: Path) -> XDMManifest | None:
         return None
 
     try:
-        tree = etree.parse(str(metadata_path))  # noqa: S320
-    except etree.XMLSyntaxError:
-        logger.warning("Malformed XML in %s", metadata_path)
+        tree = etree.parse(str(metadata_path), _SAFE_PARSER)
+    except (etree.XMLSyntaxError, OSError):
+        logger.warning("Failed to parse METADATA.XML at %s", metadata_path)
         return None
 
     root = tree.getroot()

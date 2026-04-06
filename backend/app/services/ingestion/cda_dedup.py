@@ -1,3 +1,8 @@
+"""Intra-upload cross-document deduplication for CDA XML ingestion.
+
+Collapses identical records that appear across multiple CDA documents
+within the same upload before database insertion.
+"""
 from __future__ import annotations
 
 import logging

@@ -38,7 +38,7 @@ CDA_TEMPLATES = [
 ]
 
 # Resource types produced by the converter that are not clinical data.
-_SKIP_RESOURCE_TYPES = {"Patient", "Practitioner", "Organization", "Composition", "Medication"}
+_SKIP_RESOURCE_TYPES = {"Patient", "Practitioner", "Organization", "Composition"}
 
 # Try importing XDMDocument from xdm_parser; fall back to local definition.
 try:
@@ -82,6 +82,7 @@ def parse_cda_document(
 
     # --- Hash validation ---
     if manifest_doc is not None:
+        # IHE XDM standard mandates SHA-1 for document integrity hashes
         actual_hash = hashlib.sha1(raw_bytes).hexdigest()
         if actual_hash != manifest_doc.hash:
             logger.warning(
@@ -99,7 +100,7 @@ def parse_cda_document(
     institution = manifest_doc.author_institution if manifest_doc else ""
 
     # --- CDA -> FHIR conversion ---
-    bundle = _render_cda_to_fhir(xml_content)
+    bundle = _render_cda_to_fhir(xml_content, filename=file_path.name)
     if bundle is None:
         return []
 
@@ -162,7 +163,7 @@ def parse_cda_document(
     return records
 
 
-def _render_cda_to_fhir(xml_content: str) -> dict | None:
+def _render_cda_to_fhir(xml_content: str, filename: str = "<unknown>") -> dict | None:
     """Try CDA templates in order and return the first successful FHIR Bundle."""
     from fhir_converter.renderers import CcdaRenderer
 
@@ -173,8 +174,8 @@ def _render_cda_to_fhir(xml_content: str) -> dict | None:
             result = renderer.render_to_fhir(template, xml_content)
             if result and result.get("entry"):
                 return result
-        except Exception:
-            # Template didn't match — try next one.
+        except Exception as exc:
+            logger.debug("Template %s did not match %s: %s", template, filename, exc)
             continue
 
     logger.warning("No CDA template produced a valid FHIR Bundle")
