@@ -286,7 +286,7 @@ async def _ingest_xdm(
         rec["source_file_id"] = upload_id
 
     # Bulk insert in batches
-    batch_size = 100
+    batch_size = settings.ingestion_batch_size
     for i in range(0, len(unique_records), batch_size):
         batch = unique_records[i : i + batch_size]
         count = await bulk_insert_records(db, batch)

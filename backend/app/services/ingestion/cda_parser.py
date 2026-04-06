@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -39,22 +38,6 @@ CDA_TEMPLATES = [
 
 # Resource types produced by the converter that are not clinical data.
 _SKIP_RESOURCE_TYPES = {"Patient", "Practitioner", "Organization", "Composition"}
-
-# Try importing XDMDocument from xdm_parser; fall back to local definition.
-try:
-    from app.services.ingestion.xdm_parser import XDMDocument
-except ImportError:
-
-    @dataclass
-    class XDMDocument:  # type: ignore[no-redef]
-        """Minimal stand-in for XDM manifest document metadata."""
-
-        uri: str
-        hash: str
-        size: int
-        creation_time: str
-        mime_type: str
-        author_institution: str
 
 
 def parse_cda_document(
