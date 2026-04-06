@@ -105,8 +105,25 @@ async def parse_sections(text: str, api_key: str) -> ParsedDocument:
             sections=[ParsedSection(SectionType.OTHER, "Full Document", text)],
         )
 
+    # Handle case where Gemini returns a JSON array instead of an object.
+    # If the response is a list, treat it as the sections array directly.
+    if isinstance(llm_response, list):
+        raw_sections = llm_response
+        doc_type = "unknown"
+        visit_date = None
+        provider = None
+        facility = None
+    else:
+        raw_sections = llm_response.get("sections", [])
+        doc_type = llm_response.get("document_type", "unknown")
+        visit_date = llm_response.get("primary_visit_date")
+        provider = llm_response.get("provider")
+        facility = llm_response.get("facility")
+
     sections = []
-    for s in llm_response.get("sections", []):
+    for s in raw_sections:
+        if not isinstance(s, dict):
+            continue
         try:
             section_type = SectionType(s["type"])
         except (ValueError, KeyError):
@@ -126,10 +143,10 @@ async def parse_sections(text: str, api_key: str) -> ParsedDocument:
         sections = [ParsedSection(SectionType.OTHER, "Full Document", text)]
 
     return ParsedDocument(
-        document_type=llm_response.get("document_type", "unknown"),
-        primary_visit_date=llm_response.get("primary_visit_date"),
-        provider=llm_response.get("provider"),
-        facility=llm_response.get("facility"),
+        document_type=doc_type,
+        primary_visit_date=visit_date,
+        provider=provider,
+        facility=facility,
         sections=sections,
     )
 

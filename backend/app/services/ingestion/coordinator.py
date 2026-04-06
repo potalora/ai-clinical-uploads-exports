@@ -54,8 +54,18 @@ def compute_file_hash(file_path: Path) -> str:
     return sha256.hexdigest()
 
 
+def _is_cda_xml(file_path: Path) -> bool:
+    """Check if an XML file is a CDA ClinicalDocument."""
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            header = f.read(500)
+            return "ClinicalDocument" in header
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
 def detect_file_type(file_path: Path) -> str:
-    """Detect whether a file is FHIR JSON, Epic TSV directory, or ZIP."""
+    """Detect whether a file is FHIR JSON, Epic TSV directory, CDA XML, or ZIP."""
     if file_path.is_dir():
         tsv_files = list(file_path.glob("*.tsv"))
         if tsv_files:
@@ -69,6 +79,8 @@ def detect_file_type(file_path: Path) -> str:
         return "fhir_r4"
     if suffix == ".tsv":
         return "epic_ehi_single"
+    if suffix == ".xml" and _is_cda_xml(file_path):
+        return "cda_xml"
     return "unknown"
 
 
@@ -122,6 +134,8 @@ async def ingest_file(
             stats = await _ingest_epic_dir(db, user_id, patient.id, upload.id, file_path)
         elif file_type == "zip":
             stats = await _ingest_zip(db, user_id, patient.id, upload.id, file_path)
+        elif file_type == "cda_xml":
+            stats = await _ingest_cda_standalone(db, user_id, patient.id, upload.id, file_path)
         else:
             raise ValueError(f"Unsupported file type: {file_type}")
 
@@ -213,6 +227,54 @@ async def _ingest_epic_dir(
         source_file_id=upload_id,
         db=db,
     )
+
+
+async def _ingest_cda_standalone(
+    db: AsyncSession,
+    user_id: UUID,
+    patient_id: UUID,
+    upload_id: UUID,
+    file_path: Path,
+) -> dict:
+    """Ingest a standalone CDA XML file (not inside an XDM package)."""
+    from app.services.ingestion.bulk_inserter import bulk_insert_records
+
+    stats: dict = {
+        "total_entries": 0,
+        "records_inserted": 0,
+        "records_skipped": 0,
+        "errors": [],
+    }
+
+    try:
+        records = parse_cda_document(file_path, manifest_doc=None)
+        stats["total_entries"] = len(records)
+    except Exception as e:
+        stats["errors"].append({"file": file_path.name, "error": str(e)})
+        return stats
+
+    if not records:
+        stats["errors"].append({"error": "No records extracted from CDA document"})
+        return stats
+
+    for rec in records:
+        rec["user_id"] = user_id
+        rec["patient_id"] = patient_id
+        rec["source_file_id"] = upload_id
+
+    batch_size = settings.ingestion_batch_size
+    for i in range(0, len(records), batch_size):
+        batch = records[i : i + batch_size]
+        count = await bulk_insert_records(db, batch)
+        stats["records_inserted"] += count
+        await db.commit()
+
+    logger.info(
+        "Standalone CDA ingestion: %d entries, %d inserted",
+        stats["total_entries"],
+        stats["records_inserted"],
+    )
+    return stats
 
 
 async def _ingest_xdm(
