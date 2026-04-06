@@ -1,6 +1,6 @@
 # MedTimeline
 
-Puts medical records from different formats into one place. Reads FHIR R4 bundles, Epic EHI exports (TSV), and scanned documents (PDF, RTF, TIFF), stores everything in PostgreSQL, and shows it on a timeline.
+Puts medical records from different formats into one place. Reads FHIR R4 bundles, Epic EHI exports (TSV), CDA XML / IHE XDM packages (Epic MyChart exports), and scanned documents (PDF, RTF, TIFF), stores everything in PostgreSQL, and shows it on a timeline.
 
 AI is optional. Without an API key you still get record ingestion, a timeline, and de-identified prompt building you can paste into whatever LLM you want. Add a Gemini key and it'll also extract text from scans, pull out clinical entities, and generate summaries. Health data gets de-identified before any AI call — the PHI scrubber strips all 18 HIPAA identifier types.
 
@@ -11,7 +11,7 @@ AI is optional. Without an API key you still get record ingestion, a timeline, a
 
 ## What it does
 
-- Parses FHIR R4 JSON bundles and Epic EHI Tables (14 mappers) into a normalized PostgreSQL schema
+- Parses FHIR R4 JSON bundles, Epic EHI Tables (14 mappers), and CDA XML / IHE XDM packages into a normalized PostgreSQL schema
 - Extracts text from PDFs, RTFs, and TIFFs via Gemini vision API
 - Identifies clinical entities (meds, conditions, labs, vitals, procedures, allergies, providers) with confidence scores
 - Lets you review extracted entities before they become FHIR records
@@ -42,6 +42,7 @@ On the HIPAA side: AES-256 encryption at rest, audit logging on every data endpo
               │  ┌───────────┐ │  └───┬────┘  │PHI Scrub   │  │
               │  │FHIR Parser│ │      │       │Gemini API  │  │
               │  │Epic Parser│ │      │       └─────┬──────┘  │
+              │  │CDA Parser │ │      │             │         │
               │  │Text Extrac│ │      │             │         │
               │  │Entity Extr│ │      │             │         │
               │  │Dedup Eng. │ │      │             │         │
@@ -58,7 +59,7 @@ Two AI modes: build prompts locally and run them yourself (no API key), or let t
 
 ## Tech stack
 
-**Backend**: Python 3.12, FastAPI, SQLAlchemy 2 (async), PostgreSQL 16, Alembic, Gemini API, LangExtract
+**Backend**: Python 3.12, FastAPI, SQLAlchemy 2 (async), PostgreSQL 16, Alembic, Gemini API, LangExtract, python-fhir-converter
 
 **Frontend**: Next.js 15, TypeScript, Tailwind CSS 4, shadcn/ui, TanStack Query, Zustand, NextAuth.js
 
@@ -73,7 +74,7 @@ backend/
 │   ├── schemas/           # auth, records, timeline, summary, upload, dedup
 │   ├── api/               # auth, records, timeline, upload, summary, dedup, dashboard
 │   └── services/
-│       ├── ingestion/     # coordinator, fhir_parser, epic_parser, epic_mappers/ (14 mappers)
+│       ├── ingestion/     # coordinator, fhir_parser, epic_parser, epic_mappers/ (14 mappers), xdm_parser, cda_parser, cda_dedup
 │       ├── ai/            # prompt_builder, summarizer, phi_scrubber
 │       ├── extraction/    # text_extractor, entity_extractor, entity_to_fhir
 │       └── dedup/         # detector, llm_judge, orchestrator, field_merger
@@ -157,7 +158,7 @@ python -m pytest -x -v --run-slow
 python -m pytest tests/test_hipaa_compliance.py -v
 ```
 
-~307 tests across 19 files covering auth, records, ingestion (all 14 Epic mappers), extraction, summarization, dedup (heuristic + LLM judge + review API), HIPAA compliance, and fidelity checks for both Epic and FHIR imports.
+~336 tests across 23 files covering auth, records, ingestion (all 14 Epic mappers + CDA XML / IHE XDM pipeline), extraction, summarization, dedup (heuristic + LLM judge + review API), HIPAA compliance, and fidelity checks for both Epic and FHIR imports.
 
 Tests hit a separate `medtimeline_test` database (auto-derived from `DATABASE_URL`). It needs to exist with pgcrypto enabled — see infrastructure step above.
 

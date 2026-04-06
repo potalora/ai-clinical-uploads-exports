@@ -15,8 +15,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.patient import Patient
 from app.models.uploaded_file import UploadedFile
+from app.services.ingestion.cda_dedup import deduplicate_across_documents
+from app.services.ingestion.cda_parser import parse_cda_document
 from app.services.ingestion.epic_parser import parse_epic_export
 from app.services.ingestion.fhir_parser import parse_fhir_bundle
+from app.services.ingestion.xdm_parser import parse_xdm_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +70,19 @@ def detect_file_type(file_path: Path) -> str:
     if suffix == ".tsv":
         return "epic_ehi_single"
     return "unknown"
+
+
+def _find_xdm_metadata(root_dir: Path) -> Path | None:
+    """Recursively find METADATA.XML with XDM SubmitObjectsRequest root."""
+    for metadata_path in root_dir.rglob("METADATA.XML"):
+        try:
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                header = f.read(500)
+                if "SubmitObjectsRequest" in header:
+                    return metadata_path
+        except (OSError, UnicodeDecodeError):
+            continue
+    return None
 
 
 async def ingest_file(
@@ -199,6 +215,94 @@ async def _ingest_epic_dir(
     )
 
 
+async def _ingest_xdm(
+    db: AsyncSession,
+    user_id: UUID,
+    patient_id: UUID,
+    upload_id: UUID,
+    xdm_dir: Path,
+    metadata_path: Path,
+) -> dict:
+    """Ingest an IHE XDM package containing CDA XML documents."""
+    from app.services.ingestion.bulk_inserter import bulk_insert_records
+
+    stats: dict = {
+        "total_entries": 0,
+        "records_inserted": 0,
+        "records_skipped": 0,
+        "errors": [],
+        "unstructured_files": [],
+    }
+
+    # Parse manifest
+    manifest = parse_xdm_metadata(metadata_path)
+    if not manifest:
+        stats["errors"].append({"error": "Failed to parse METADATA.XML"})
+        return stats
+
+    # Filter to XML documents only
+    xml_docs = [d for d in manifest.documents if d.mime_type == "text/xml"]
+    skipped_docs = [d for d in manifest.documents if d.mime_type != "text/xml"]
+
+    # Log skipped files
+    for doc in skipped_docs:
+        stats["errors"].append({
+            "file": doc.uri,
+            "reason": "structured_preferred",
+            "message": "Skipped: CDA XML documents provide higher-fidelity structured data",
+        })
+
+    if not xml_docs:
+        stats["errors"].append({"error": "No CDA XML documents found in manifest"})
+        return stats
+
+    # Parse each CDA document
+    all_records: list[dict] = []
+    for doc in xml_docs:
+        doc_path = xdm_dir / doc.uri
+        if not doc_path.exists():
+            stats["errors"].append({"file": doc.uri, "error": "File not found"})
+            continue
+
+        try:
+            records = parse_cda_document(doc_path, doc)
+            stats["total_entries"] += len(records)
+            all_records.extend(records)
+        except Exception as e:
+            stats["errors"].append({"file": doc.uri, "error": str(e)})
+
+    if not all_records:
+        stats["errors"].append({"error": "No records extracted from CDA documents"})
+        return stats
+
+    # Intra-upload cross-document dedup
+    unique_records, dedup_stats = deduplicate_across_documents(all_records)
+    stats["records_skipped"] += dedup_stats.duplicates_collapsed
+
+    # Add user/patient/source_file IDs to each record
+    for rec in unique_records:
+        rec["user_id"] = user_id
+        rec["patient_id"] = patient_id
+        rec["source_file_id"] = upload_id
+
+    # Bulk insert in batches
+    batch_size = settings.ingestion_batch_size
+    for i in range(0, len(unique_records), batch_size):
+        batch = unique_records[i : i + batch_size]
+        count = await bulk_insert_records(db, batch)
+        stats["records_inserted"] += count
+        await db.commit()
+
+    logger.info(
+        "XDM ingestion: %d docs, %d total entries, %d unique, %d inserted",
+        len(xml_docs),
+        dedup_stats.total_parsed,
+        dedup_stats.unique_records,
+        stats["records_inserted"],
+    )
+    return stats
+
+
 async def _ingest_zip(
     db: AsyncSession,
     user_id: UUID,
@@ -213,6 +317,13 @@ async def _ingest_zip(
     try:
         with zipfile.ZipFile(zip_path, "r") as zf:
             zf.extractall(temp_dir)
+
+        # Check for IHE XDM package first
+        metadata_path = _find_xdm_metadata(temp_dir)
+        if metadata_path:
+            logger.info("Detected IHE XDM package: %s", metadata_path)
+            xdm_dir = metadata_path.parent
+            return await _ingest_xdm(db, user_id, patient_id, upload_id, xdm_dir, metadata_path)
 
         # Collect all files, excluding schema dirs and readme
         all_files = list(temp_dir.rglob("*"))

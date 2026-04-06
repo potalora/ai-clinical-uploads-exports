@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lcm:SubmitObjectsRequest xmlns:lcm="urn:oasis:names:tc:ebxml-regrep:xsd:lcm:3.0">
+  <rim:RegistryObjectList xmlns:rim="urn:oasis:names:tc:ebxml-regrep:xsd:rim:3.0">
+
+    <!-- ========== DOC0001.XML - CDA Document (Visit 1) ========== -->
+    <rim:ExtrinsicObject
+        id="urn:uuid:11111111-1111-1111-1111-111111111111"
+        mimeType="text/xml"
+        objectType="urn:uuid:7edca82f-054d-47f2-a032-9b2a5b5186c1">
+
+      <rim:Slot name="URI">
+        <rim:ValueList>
+          <rim:Value>DOC0001.XML</rim:Value>
+        </rim:ValueList>
+      </rim:Slot>
+      <rim:Slot name="hash">
+        <rim:ValueList>
+          <rim:Value>f1663ca0fb215b147afc642af8175e64418e735c</rim:Value>
+        </rim:ValueList>
+      </rim:Slot>
+      <rim:Slot name="size">
+        <rim:ValueList>
+          <rim:Value>8144</rim:Value>
+        </rim:ValueList>
+      </rim:Slot>
+      <rim:Slot name="creationTime">
+        <rim:ValueList>
+          <rim:Value>20240115120000</rim:Value>
+        </rim:ValueList>
+      </rim:Slot>
+      <rim:Slot name="sourcePatientId">
+        <rim:ValueList>
+          <rim:Value>MRN-12345^^^&amp;2.16.840.1.113883.19.5.99999.2&amp;ISO</rim:Value>
+        </rim:ValueList>
+      </rim:Slot>
+      <rim:Slot name="sourcePatientInfo">
+        <rim:ValueList>
+          <rim:Value>PID-3|MRN-12345^^^&amp;2.16.840.1.113883.19.5.99999.2&amp;ISO</rim:Value>
+          <rim:Value>PID-5|Doe^Jane^^^^</rim:Value>
+          <rim:Value>PID-7|19900115</rim:Value>
+          <rim:Value>PID-8|F</rim:Value>
+        </rim:ValueList>
+      </rim:Slot>
+
+      <rim:Name>
+        <rim:LocalizedString value="Continuity of Care Document - Visit 1"/>
+      </rim:Name>
+
+      <!-- Author institution classification -->
+      <rim:Classification
+          classificationScheme="urn:uuid:93606bcf-9494-43ec-9b4e-a7748d1a838d"
+          classifiedObject="urn:uuid:11111111-1111-1111-1111-111111111111"
+          id="urn:uuid:11111111-aaaa-aaaa-aaaa-aaaaaaaaaaaa">
+        <rim:Slot name="authorInstitution">
+          <rim:ValueList>
+            <rim:Value>Synthetic Health Clinic</rim:Value>
+          </rim:ValueList>
+        </rim:Slot>
+      </rim:Classification>
+    </rim:ExtrinsicObject>
+
+    <!-- ========== DOC0002.XML - CDA Document (Visit 2) ========== -->
+    <rim:ExtrinsicObject
+        id="urn:uuid:22222222-2222-2222-2222-222222222222"
+        mimeType="text/xml"
+        objectType="urn:uuid:7edca82f-054d-47f2-a032-9b2a5b5186c1">
+
+      <rim:Slot name="URI">
+        <rim:ValueList>
+          <rim:Value>DOC0002.XML</rim:Value>
+        </rim:ValueList>
+      </rim:Slot>
+      <rim:Slot name="hash">
+        <rim:ValueList>
+          <rim:Value>020b1f59b4cab62680f967046d73ff1e093442ac</rim:Value>
+        </rim:ValueList>
+      </rim:Slot>
+      <rim:Slot name="size">
+        <rim:ValueList>
+          <rim:Value>7961</rim:Value>
+        </rim:ValueList>
+      </rim:Slot>
+      <rim:Slot name="creationTime">
+        <rim:ValueList>
+          <rim:Value>20240315120000</rim:Value>
+        </rim:ValueList>
+      </rim:Slot>
+      <rim:Slot name="sourcePatientId">
+        <rim:ValueList>
+          <rim:Value>MRN-12345^^^&amp;2.16.840.1.113883.19.5.99999.2&amp;ISO</rim:Value>
+        </rim:ValueList>
+      </rim:Slot>
+      <rim:Slot name="sourcePatientInfo">
+        <rim:ValueList>
+          <rim:Value>PID-3|MRN-12345^^^&amp;2.16.840.1.113883.19.5.99999.2&amp;ISO</rim:Value>
+          <rim:Value>PID-5|Doe^Jane^^^^</rim:Value>
+          <rim:Value>PID-7|19900115</rim:Value>
+          <rim:Value>PID-8|F</rim:Value>
+        </rim:ValueList>
+      </rim:Slot>
+
+      <rim:Name>
+        <rim:LocalizedString value="Continuity of Care Document - Visit 2"/>
+      </rim:Name>
+
+      <!-- Author institution classification -->
+      <rim:Classification
+          classificationScheme="urn:uuid:93606bcf-9494-43ec-9b4e-a7748d1a838d"
+          classifiedObject="urn:uuid:22222222-2222-2222-2222-222222222222"
+          id="urn:uuid:22222222-aaaa-aaaa-aaaa-aaaaaaaaaaaa">
+        <rim:Slot name="authorInstitution">
+          <rim:ValueList>
+            <rim:Value>Synthetic Health Clinic</rim:Value>
+          </rim:ValueList>
+        </rim:Slot>
+      </rim:Classification>
+    </rim:ExtrinsicObject>
+
+    <!-- ========== Fake PDF (for filtering test - should be skipped by CDA parser) ========== -->
+    <rim:ExtrinsicObject
+        id="urn:uuid:33333333-3333-3333-3333-333333333333"
+        mimeType="application/pdf"
+        objectType="urn:uuid:7edca82f-054d-47f2-a032-9b2a5b5186c1">
+
+      <rim:Slot name="URI">
+        <rim:ValueList>
+          <rim:Value>SCAN0001.PDF</rim:Value>
+        </rim:ValueList>
+      </rim:Slot>
+      <rim:Slot name="hash">
+        <rim:ValueList>
+          <rim:Value>da39a3ee5e6b4b0d3255bfef95601890afd80709</rim:Value>
+        </rim:ValueList>
+      </rim:Slot>
+      <rim:Slot name="size">
+        <rim:ValueList>
+          <rim:Value>102400</rim:Value>
+        </rim:ValueList>
+      </rim:Slot>
+      <rim:Slot name="creationTime">
+        <rim:ValueList>
+          <rim:Value>20240201120000</rim:Value>
+        </rim:ValueList>
+      </rim:Slot>
+      <rim:Slot name="sourcePatientId">
+        <rim:ValueList>
+          <rim:Value>MRN-12345^^^&amp;2.16.840.1.113883.19.5.99999.2&amp;ISO</rim:Value>
+        </rim:ValueList>
+      </rim:Slot>
+      <rim:Slot name="sourcePatientInfo">
+        <rim:ValueList>
+          <rim:Value>PID-3|MRN-12345^^^&amp;2.16.840.1.113883.19.5.99999.2&amp;ISO</rim:Value>
+          <rim:Value>PID-5|Doe^Jane^^^^</rim:Value>
+          <rim:Value>PID-7|19900115</rim:Value>
+          <rim:Value>PID-8|F</rim:Value>
+        </rim:ValueList>
+      </rim:Slot>
+
+      <rim:Name>
+        <rim:LocalizedString value="Scanned Lab Report"/>
+      </rim:Name>
+    </rim:ExtrinsicObject>
+
+  </rim:RegistryObjectList>
+</lcm:SubmitObjectsRequest>
