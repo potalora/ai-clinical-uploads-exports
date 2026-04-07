@@ -155,8 +155,8 @@ export default function UploadPage() {
         );
         setExtractionProgress(data);
 
-        // Stop polling when nothing is processing
-        if (data.processing === 0) {
+        // Stop polling when nothing is processing or pending
+        if (data.processing === 0 && data.pending === 0) {
           if (progressPollRef.current) {
             clearInterval(progressPollRef.current);
             progressPollRef.current = null;

@@ -4,6 +4,8 @@ import time
 from collections import defaultdict
 from threading import Lock
 
+from app.config import settings
+
 
 class RateLimiter:
     """In-memory sliding window rate limiter."""
@@ -29,5 +31,11 @@ class RateLimiter:
             return True
 
 
-login_limiter = RateLimiter(max_requests=5, window_seconds=60)
-register_limiter = RateLimiter(max_requests=3, window_seconds=60)
+login_limiter = RateLimiter(
+    max_requests=settings.login_rate_limit,
+    window_seconds=settings.login_rate_window,
+)
+register_limiter = RateLimiter(
+    max_requests=settings.register_rate_limit,
+    window_seconds=settings.register_rate_window,
+)

@@ -21,7 +21,7 @@ PATCH_BG_TASK = patch(
 )
 
 # Patch the extraction worker so trigger-extraction tests don't start a real background loop.
-PATCH_WORKER = patch("app.api.upload._ensure_worker_running")
+PATCH_WORKER = patch("app.api.upload.start_extraction_worker")
 
 
 @pytest.mark.asyncio
@@ -40,7 +40,7 @@ async def test_upload_rtf_creates_record(client: AsyncClient, db_session: AsyncS
     assert resp.status_code == 202
     data = resp.json()
     assert data["upload_id"]
-    assert data["status"] == "processing"
+    assert data["status"] == "pending_extraction"
     assert data["file_type"] == "rtf"
 
 
@@ -97,7 +97,7 @@ async def test_extraction_results_for_uploaded_file(client: AsyncClient, db_sess
         )
     upload_id = upload_resp.json()["upload_id"]
 
-    # Background task is mocked, so status will be "processing"
+    # File is queued, so status will be "pending_extraction"
     resp = await client.get(
         f"/api/v1/upload/{upload_id}/extraction",
         headers=headers,
@@ -105,7 +105,7 @@ async def test_extraction_results_for_uploaded_file(client: AsyncClient, db_sess
     assert resp.status_code == 200
     data = resp.json()
     assert data["upload_id"] == upload_id
-    assert data["status"] in ("processing", "awaiting_confirmation", "completed", "failed")
+    assert data["status"] in ("pending_extraction", "processing", "awaiting_confirmation", "completed", "failed")
 
 
 @pytest.mark.asyncio
@@ -219,7 +219,7 @@ async def test_concurrent_uploads_respect_semaphore(client: AsyncClient, db_sess
             assert resp.status_code == 202
             data = resp.json()
             assert data["upload_id"]
-            assert data["status"] == "processing"
+            assert data["status"] == "pending_extraction"
             upload_ids.append(data["upload_id"])
 
     # All 3 should have unique upload IDs

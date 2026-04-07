@@ -48,7 +48,7 @@ async def run_upload_dedup(
 
     1. Heuristic filter: scoped comparison (new records vs existing)
     2. Auto-merge exact matches (score >= 0.95)
-    3. LLM judge on fuzzy matches (score 0.5–0.95)
+    3. LLM judge on fuzzy matches (score 0.6–0.95)
     4. Auto-resolve based on LLM output
     5. Return summary
     """

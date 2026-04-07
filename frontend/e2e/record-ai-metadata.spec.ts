@@ -1,30 +1,24 @@
-import { test, expect, type Page } from "@playwright/test";
-import { getTestAuth, authHeaders, type AuthContext } from "./helpers/auth";
+import { test, expect } from "@playwright/test";
+import { browserLogin } from "./helpers/browser-login";
+import { ApiClient } from "./helpers/api-client";
+import { testEmail, TEST_PASSWORD, PATHS } from "./helpers/test-data";
 
-const API_BASE = "http://localhost:8000/api/v1";
-
-let auth: AuthContext;
-
-test.beforeAll(async () => {
-  auth = await getTestAuth();
-});
-
-async function loginViaUI(page: Page) {
-  await page.goto("/login");
-  await page.fill('input[name="email"]', "test-renderer@test.com");
-  await page.fill('input[name="password"]', "TestPass123!");
-  await page.click('button[type="submit"]');
-  await page.waitForURL(/\/(home|admin|dashboard)/);
-}
+const email = testEmail("record-ai-metadata");
 
 test.describe("AI Extraction Metadata Display", () => {
-  test("non-AI records do not show AI badge", async ({ page }) => {
-    await loginViaUI(page);
+  const api = new ApiClient();
 
-    // Fetch a regular record from the API
-    const headers = authHeaders(auth.accessToken);
-    const res = await fetch(`${API_BASE}/records?page_size=1`, { headers });
-    const data = await res.json();
+  test.beforeAll(async () => {
+    await api.register(email, TEST_PASSWORD);
+    await api.login(email, TEST_PASSWORD);
+    const result = await api.uploadStructured(PATHS.fhirBundle, "sample_fhir_bundle.json");
+    await api.pollUploadStatus(result.upload_id, 60_000);
+  });
+
+  test("non-AI records do not show AI badge", async ({ page }) => {
+    await browserLogin(page, email, TEST_PASSWORD);
+
+    const data = await api.getRecords({ page: 1 });
 
     if (data.items.length === 0) {
       test.skip();
@@ -43,9 +37,7 @@ test.describe("AI Extraction Metadata Display", () => {
   });
 
   test("API returns ai_extracted and confidence_score fields", async () => {
-    const headers = authHeaders(auth.accessToken);
-    const res = await fetch(`${API_BASE}/records?page_size=1`, { headers });
-    const data = await res.json();
+    const data = await api.getRecords({ page: 1 });
 
     if (data.items.length === 0) {
       test.skip();

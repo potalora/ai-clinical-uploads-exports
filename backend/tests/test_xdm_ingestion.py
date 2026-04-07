@@ -53,7 +53,7 @@ async def test_coordinator_detects_xdm_in_zip(
 
     with patch(PATCH_DEDUP, new_callable=AsyncMock) as mock_dedup, \
          patch(
-             "app.services.ingestion.cda_parser.parse_cda_document"
+             "app.services.ingestion.coordinator.parse_cda_document"
          ) as mock_parse:
         mock_dedup.return_value = DedupSummary()
 
@@ -99,7 +99,7 @@ async def test_coordinator_detects_xdm_in_zip(
 
     assert resp.status_code == 202
     data = resp.json()
-    assert data["status"] == "completed"
+    assert data["status"] in ("completed", "dedup_scanning")
     # parse_cda_document called once per XML doc (2 docs in manifest)
     assert mock_parse.call_count == 2
     # 1 record per doc x 2 docs = 2 records, dedup may collapse some
@@ -116,7 +116,7 @@ async def test_xdm_skips_pdf_in_package(
 
     with patch(PATCH_DEDUP, new_callable=AsyncMock) as mock_dedup, \
          patch(
-             "app.services.ingestion.cda_parser.parse_cda_document"
+             "app.services.ingestion.coordinator.parse_cda_document"
          ) as mock_parse:
         mock_dedup.return_value = DedupSummary()
         mock_parse.return_value = [
@@ -139,7 +139,7 @@ async def test_xdm_skips_pdf_in_package(
                 "code_system": None,
                 "code_value": None,
                 "code_display": None,
-                "display_text": None,
+                "display_text": "Condition",
             }
         ]
 
@@ -172,7 +172,7 @@ async def test_xdm_creates_cda_records(
 
     with patch(PATCH_DEDUP, new_callable=AsyncMock) as mock_dedup, \
          patch(
-             "app.services.ingestion.cda_parser.parse_cda_document"
+             "app.services.ingestion.coordinator.parse_cda_document"
          ) as mock_parse:
         mock_dedup.return_value = DedupSummary()
         mock_parse.return_value = [
@@ -274,7 +274,7 @@ async def test_xdm_intra_upload_dedup(
 
     with patch(PATCH_DEDUP, new_callable=AsyncMock) as mock_dedup, \
          patch(
-             "app.services.ingestion.cda_parser.parse_cda_document",
+             "app.services.ingestion.coordinator.parse_cda_document",
              side_effect=mock_parse_side_effect,
          ):
         mock_dedup.return_value = DedupSummary()
@@ -310,6 +310,6 @@ async def test_non_xdm_zip_uses_existing_pipeline(
 
     assert resp.status_code == 202
     data = resp.json()
-    assert data["status"] == "completed"
+    assert data["status"] in ("completed", "dedup_scanning")
     # The sample FHIR bundle has 17 clinical resources
     assert data["records_inserted"] == 17

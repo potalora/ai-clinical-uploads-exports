@@ -4,15 +4,16 @@ import asyncio
 import hashlib
 import logging
 import shutil
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, UploadFile, status
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.database import async_session_factory
 
 # Global semaphore to limit concurrent Gemini API calls across all uploads
 _gemini_semaphore: asyncio.Semaphore | None = None
@@ -20,8 +21,7 @@ _gemini_semaphore: asyncio.Semaphore | None = None
 # Extraction semaphore to limit concurrent file extractions (layer above Gemini semaphore)
 _extraction_semaphore: asyncio.Semaphore | None = None
 
-# Queue-based extraction worker state
-_extraction_queue: asyncio.Queue | None = None
+# Worker task reference
 _worker_task: asyncio.Task | None = None
 
 
@@ -35,50 +35,154 @@ def _get_gemini_semaphore() -> asyncio.Semaphore:
 def _get_extraction_semaphore() -> asyncio.Semaphore:
     global _extraction_semaphore
     if _extraction_semaphore is None:
-        _extraction_semaphore = asyncio.Semaphore(5)
+        _extraction_semaphore = asyncio.Semaphore(settings.extraction_concurrency)
     return _extraction_semaphore
 
 
-def _get_extraction_queue() -> asyncio.Queue:
-    global _extraction_queue
-    if _extraction_queue is None:
-        _extraction_queue = asyncio.Queue()
-    return _extraction_queue
+async def _extraction_worker() -> None:
+    """DB-polling background worker: claim pending files and process them.
+
+    Uses a rolling window approach: claims one file at a time, acquires a
+    semaphore slot, then fires off processing without waiting. This keeps all
+    extraction slots busy instead of blocking on the slowest file in a batch.
+    """
+    sem = _get_extraction_semaphore()
+    poll_interval = 2
+    stuck_check_interval = 60
+    last_stuck_check = datetime.now(timezone.utc)
+
+    logger.info("Extraction worker started (concurrency=%d, poll=%ds)", settings.extraction_concurrency, poll_interval)
+
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            if (now - last_stuck_check).total_seconds() >= stuck_check_interval:
+                await _recover_stuck_files()
+                last_stuck_check = now
+
+            # Claim one file at a time for rolling window
+            claimed = await _claim_pending_files(1)
+            if not claimed:
+                await asyncio.sleep(poll_interval)
+                continue
+
+            upload_id, file_path, user_id = claimed[0]
+            logger.info("Claimed file %s for extraction", upload_id)
+
+            # Block until a slot opens, then fire-and-forget
+            await sem.acquire()
+            asyncio.create_task(
+                _process_and_release(sem, upload_id, Path(file_path), user_id)
+            )
+
+        except Exception:
+            logger.exception("Extraction worker encountered an error, recovering")
+            await asyncio.sleep(5)
+
+
+async def _claim_pending_files(batch_size: int) -> list[tuple[str, str, str]]:
+    """Claim pending extraction files using SELECT FOR UPDATE SKIP LOCKED."""
+    async with async_session_factory() as db:
+        try:
+            result = await db.execute(
+                text(
+                    "SELECT id, storage_path, user_id FROM uploaded_files "
+                    "WHERE ingestion_status = 'pending_extraction' "
+                    "AND file_category = 'unstructured' "
+                    "ORDER BY created_at ASC "
+                    "LIMIT :batch_size "
+                    "FOR UPDATE SKIP LOCKED"
+                ),
+                {"batch_size": batch_size},
+            )
+            rows = result.fetchall()
+
+            if not rows:
+                return []
+
+            # Mark claimed files as processing
+            ids = [row[0] for row in rows]
+            now = datetime.now(timezone.utc)
+            await db.execute(
+                text(
+                    "UPDATE uploaded_files "
+                    "SET ingestion_status = 'processing', "
+                    "processing_started_at = :now "
+                    "WHERE id = ANY(:ids)"
+                ),
+                {"now": now, "ids": ids},
+            )
+            await db.commit()
+
+            return [(str(row[0]), row[1], str(row[2])) for row in rows]
+
+        except Exception as e:
+            logger.exception("Failed to claim pending files: %s", e)
+            await db.rollback()
+            return []
+
+
+async def _recover_stuck_files() -> None:
+    """Reset files stuck in 'processing' beyond the timeout.
+
+    Increments retry_count. After max retries, marks as 'failed'.
+    """
+    timeout = timedelta(minutes=settings.extraction_timeout_minutes)
+    cutoff = datetime.now(timezone.utc) - timeout
+    max_retries = settings.extraction_max_retries
+
+    async with async_session_factory() as db:
+        try:
+            # Reset retriable files back to pending
+            await db.execute(
+                text(
+                    "UPDATE uploaded_files "
+                    "SET ingestion_status = 'pending_extraction', "
+                    "processing_started_at = NULL, "
+                    "retry_count = COALESCE(retry_count, 0) + 1 "
+                    "WHERE ingestion_status = 'processing' "
+                    "AND file_category = 'unstructured' "
+                    "AND processing_started_at < :cutoff "
+                    "AND COALESCE(retry_count, 0) < :max_retries"
+                ),
+                {"cutoff": cutoff, "max_retries": max_retries},
+            )
+
+            # Mark files that exceeded max retries as failed
+            await db.execute(
+                text(
+                    "UPDATE uploaded_files "
+                    "SET ingestion_status = 'failed', "
+                    "ingestion_errors = '[{\"error\": \"Processing timed out after maximum retries.\", \"error_type\": \"TimeoutError\"}]'::jsonb, "
+                    "processing_completed_at = :now "
+                    "WHERE ingestion_status = 'processing' "
+                    "AND file_category = 'unstructured' "
+                    "AND processing_started_at < :cutoff "
+                    "AND COALESCE(retry_count, 0) >= :max_retries"
+                ),
+                {"cutoff": cutoff, "max_retries": max_retries, "now": datetime.now(timezone.utc)},
+            )
+
+            await db.commit()
+        except Exception:
+            logger.exception("Failed to recover stuck files")
+            await db.rollback()
 
 
 async def _process_and_release(
-    sem: asyncio.Semaphore, upload_id: UUID, file_path: Path, user_id: UUID
+    sem: asyncio.Semaphore, upload_id: UUID | str, file_path: Path, user_id: UUID | str
 ) -> None:
     """Process one file then release the semaphore."""
     try:
-        await _process_unstructured(upload_id, file_path, user_id)
+        uid = UUID(str(upload_id)) if not isinstance(upload_id, UUID) else upload_id
+        uid_user = UUID(str(user_id)) if not isinstance(user_id, UUID) else user_id
+        await _process_unstructured(uid, file_path, uid_user)
     finally:
         sem.release()
 
 
-async def _extraction_worker() -> None:
-    """Background worker: pull files from queue, process with concurrency limit.
-
-    Only creates tasks when a semaphore slot is available, preventing
-    event loop starvation when many files are queued.
-    """
-    queue = _get_extraction_queue()
-    sem = _get_extraction_semaphore()
-    active: set[asyncio.Task] = set()
-
-    while True:
-        upload_id, file_path, user_id = await queue.get()
-        await sem.acquire()
-        task = asyncio.create_task(
-            _process_and_release(sem, upload_id, file_path, user_id)
-        )
-        active.add(task)
-        task.add_done_callback(active.discard)
-        queue.task_done()
-
-
-def _ensure_worker_running() -> None:
-    """Start the extraction worker if it's not already running."""
+def start_extraction_worker() -> None:
+    """Start the DB-polling extraction worker. Called from main.py lifespan."""
     global _worker_task
     if _worker_task is None or _worker_task.done():
         _worker_task = asyncio.create_task(_extraction_worker())
@@ -295,14 +399,14 @@ async def extraction_progress(
     result = await db.execute(
         select(
             func.count().label("total"),
-            func.count().filter(UploadedFile.ingestion_status == "completed").label("completed"),
+            func.count().filter(UploadedFile.ingestion_status.in_(["completed", "awaiting_confirmation", "awaiting_review", "completed_with_merges"])).label("completed"),
             func.count().filter(UploadedFile.ingestion_status == "processing").label("processing"),
             func.count().filter(UploadedFile.ingestion_status == "failed").label("failed"),
             func.count().filter(UploadedFile.ingestion_status == "pending_extraction").label("pending"),
             func.coalesce(
                 func.sum(
                     case(
-                        (UploadedFile.ingestion_status == "completed", UploadedFile.record_count),
+                        (UploadedFile.ingestion_status.in_(["completed", "awaiting_confirmation", "awaiting_review", "completed_with_merges"]), UploadedFile.record_count),
                         else_=0,
                     )
                 ),
@@ -357,18 +461,13 @@ async def trigger_extraction(
             failed.append({"upload_id": str(uid), "status": upload.ingestion_status})
             continue
 
-        upload.ingestion_status = "processing"
+        # Set to pending_extraction — the DB-polling worker picks them up automatically
+        if upload.ingestion_status in ("failed", "awaiting_confirmation", "processing"):
+            upload.ingestion_status = "pending_extraction"
         triggered.append(upload)
 
     if triggered:
         await db.commit()
-
-    # Enqueue files for the background worker (processes up to 5 concurrently,
-    # without creating N idle coroutines that exhaust the DB connection pool)
-    queue = _get_extraction_queue()
-    _ensure_worker_running()
-    for upload in triggered:
-        await queue.put((upload.id, Path(upload.storage_path), user_id))
 
     await log_audit_event(
         db,
@@ -383,7 +482,7 @@ async def trigger_extraction(
         "triggered": len(triggered),
         "failed": len(failed),
         "results": [
-            {"upload_id": str(u.id), "status": "processing"} for u in triggered
+            {"upload_id": str(u.id), "status": "pending_extraction"} for u in triggered
         ] + failed,
     }
 
@@ -474,8 +573,8 @@ async def _process_unstructured(upload_id: UUID, file_path: Path, user_id: UUID)
     Uses section-aware extraction: Gemini parses document structure first,
     then LangExtract runs per-section (respecting the 2000-char buffer).
     """
-    from app.database import async_session_factory
-    from app.services.extraction.text_extractor import extract_text
+    from app.services.extraction.text_extractor import extract_text, detect_file_type as _detect_file_type
+    from app.services.extraction.text_extractor import FileType as _FileType
     from app.services.extraction.entity_extractor import extract_entities_async
     from app.services.ai.phi_scrubber import scrub_phi
 
@@ -495,17 +594,37 @@ async def _process_unstructured(upload_id: UUID, file_path: Path, user_id: UUID)
             sem = _get_gemini_semaphore()
 
             # Step 1: Extract text (Gemini for PDF/TIFF, local for RTF)
-            async with sem:
-                text, file_type = await extract_text(file_path, settings.gemini_api_key)
+            file_type_enum = _detect_file_type(file_path)
+            if file_type_enum == _FileType.RTF:
+                extracted_text, file_type = await extract_text(file_path, settings.gemini_api_key)
+            else:
+                async with sem:
+                    extracted_text, file_type = await extract_text(file_path, settings.gemini_api_key)
+            text = extracted_text
             upload.extracted_text = text
             await db.commit()
 
             # Step 2: Scrub PHI before entity extraction — local, no semaphore
             scrubbed_text, deident_report = scrub_phi(text)
 
-            # Step 3: Section parsing (NEW)
-            async with sem:
-                parsed_doc = await parse_sections(scrubbed_text, settings.gemini_api_key)
+            # Step 3: Section parsing (skip Gemini call for small docs)
+            if len(scrubbed_text) < settings.small_doc_threshold:
+                from app.services.extraction.section_parser import ParsedDocument, ParsedSection, SectionType
+                parsed_doc = ParsedDocument(
+                    sections=[ParsedSection(
+                        section_type=SectionType.OTHER,
+                        title="Full Document",
+                        text=scrubbed_text,
+                        char_range=(0, len(scrubbed_text)),
+                    )],
+                    document_type="clinical_note",
+                    primary_visit_date=None,
+                    provider=None,
+                    facility=None,
+                )
+            else:
+                async with sem:
+                    parsed_doc = await parse_sections(scrubbed_text, settings.gemini_api_key)
 
             upload.extraction_sections = {
                 "sections": [
@@ -522,17 +641,27 @@ async def _process_unstructured(upload_id: UUID, file_path: Path, user_id: UUID)
             }
             await db.commit()
 
-            # Step 4: Per-section entity extraction (replaces single extraction)
+            # Step 4: Per-section entity extraction (with small-chunk batching)
             all_entities = []
             extraction_tasks = []
+            current_batch = ""
+            current_section = None
 
             for section in parsed_doc.sections:
                 chunks = split_large_section(section.text)
                 for chunk in chunks:
-                    extraction_tasks.append((chunk, section.section_type.value))
+                    if current_batch and len(current_batch) + len(chunk) + 1 <= 2000:
+                        current_batch += "\n" + chunk
+                    else:
+                        if current_batch:
+                            extraction_tasks.append((current_batch, current_section))
+                        current_batch = chunk
+                        current_section = section.section_type.value
+            if current_batch:
+                extraction_tasks.append((current_batch, current_section))
 
-            # Process up to 3 sections concurrently
-            section_sem = asyncio.Semaphore(3)
+            # Process sections concurrently (configurable)
+            section_sem = asyncio.Semaphore(settings.section_extraction_concurrency)
 
             async def extract_chunk(text_chunk: str, section_type: str):
                 async with section_sem:
@@ -645,23 +774,15 @@ async def _process_unstructured(upload_id: UUID, file_path: Path, user_id: UUID)
 
                 await db.commit()
 
-                # Run dedup scan on newly created records
-                from app.services.dedup.orchestrator import run_upload_dedup
+                # Run dedup scan in background
                 upload.ingestion_status = "dedup_scanning"
+                upload.record_count = len(created_records)
                 await db.commit()
 
-                dedup_summary = await run_upload_dedup(
-                    upload_id, patient.id, user_id, db
+                from app.services.ingestion.coordinator import _run_dedup_background
+                asyncio.create_task(
+                    _run_dedup_background(upload_id, patient.id, user_id)
                 )
-                upload.dedup_summary = dedup_summary.to_dict()
-
-                if dedup_summary.needs_review > 0:
-                    upload.ingestion_status = "awaiting_review"
-                elif dedup_summary.auto_merged > 0:
-                    upload.ingestion_status = "completed_with_merges"
-                else:
-                    upload.ingestion_status = "completed"
-                upload.record_count = len(created_records)
             else:
                 # No patient found — fall back to manual confirmation
                 upload.ingestion_status = "awaiting_confirmation"
@@ -686,7 +807,6 @@ async def _process_unstructured(upload_id: UUID, file_path: Path, user_id: UUID)
 )
 async def upload_unstructured(
     file: UploadFile,
-    background_tasks: BackgroundTasks,
     user_id: UUID = Depends(get_authenticated_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> UnstructuredUploadResponse:
@@ -729,7 +849,7 @@ async def upload_unstructured(
         file_size_bytes=len(content),
         file_hash=file_hash,
         storage_path=str(file_path),
-        ingestion_status="processing",
+        ingestion_status="pending_extraction",
         file_category="unstructured",
     )
     db.add(upload_record)
@@ -745,14 +865,14 @@ async def upload_unstructured(
         details={"filename": file.filename, "file_type": ext},
     )
 
-    background_tasks.add_task(_process_unstructured, upload_record.id, file_path, user_id)
+    # Worker will pick up the file automatically via DB polling
 
     from app.services.extraction.text_extractor import detect_file_type
     file_type = detect_file_type(file_path)
 
     return UnstructuredUploadResponse(
         upload_id=str(upload_record.id),
-        status="processing",
+        status="pending_extraction",
         file_type=file_type.value,
     )
 
@@ -764,7 +884,6 @@ async def upload_unstructured(
 )
 async def upload_unstructured_batch(
     files: list[UploadFile],
-    background_tasks: BackgroundTasks,
     user_id: UUID = Depends(get_authenticated_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> BatchUploadResponse:
@@ -804,7 +923,7 @@ async def upload_unstructured_batch(
             file_size_bytes=len(content),
             file_hash=file_hash,
             storage_path=str(file_path),
-            ingestion_status="processing",
+            ingestion_status="pending_extraction",
             file_category="unstructured",
         )
         db.add(upload_record)
@@ -819,16 +938,16 @@ async def upload_unstructured_batch(
             details={"filename": file.filename, "file_type": ext},
         )
 
-        background_tasks.add_task(_process_unstructured, upload_record.id, file_path, user_id)
-
         file_type = detect_file_type(file_path)
         results.append(UnstructuredUploadResponse(
             upload_id=str(upload_record.id),
-            status="processing",
+            status="pending_extraction",
             file_type=file_type.value,
         ))
 
     await db.commit()
+
+    # Worker will pick up files automatically via DB polling
 
     return BatchUploadResponse(uploads=results, total=len(results))
 
@@ -928,25 +1047,15 @@ async def confirm_extraction(
 
     await db.commit()
 
-    # Run dedup on confirmed records
-    from app.services.dedup.orchestrator import run_upload_dedup
+    # Run dedup in background
     upload.ingestion_status = "dedup_scanning"
-    await db.commit()
-
-    dedup_summary = await run_upload_dedup(
-        upload_id, patient_uuid, user_id, db
-    )
-    upload.dedup_summary = dedup_summary.to_dict()
-
-    if dedup_summary.needs_review > 0:
-        upload.ingestion_status = "awaiting_review"
-    elif dedup_summary.auto_merged > 0:
-        upload.ingestion_status = "completed_with_merges"
-    else:
-        upload.ingestion_status = "completed"
     upload.record_count = created_count
-    upload.processing_completed_at = datetime.now(timezone.utc)
     await db.commit()
+
+    from app.services.ingestion.coordinator import _run_dedup_background
+    asyncio.create_task(
+        _run_dedup_background(upload_id, patient_uuid, user_id)
+    )
 
     await log_audit_event(
         db,

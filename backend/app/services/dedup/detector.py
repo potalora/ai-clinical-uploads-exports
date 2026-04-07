@@ -104,7 +104,8 @@ async def detect_upload_duplicates(
     Compares records from this upload against all other records for the patient.
     Returns (auto_merged, needs_llm_review) — two lists of candidate dicts.
     auto_merged: score >= 0.95
-    needs_llm_review: score 0.5–0.95
+    needs_llm_review: score 0.6–0.95
+    silently dropped: score 0.5–0.6 (too low for LLM judge)
     """
     # Fetch records from this upload
     new_result = await db.execute(
@@ -180,8 +181,9 @@ async def detect_upload_duplicates(
 
             if score >= 0.95:
                 auto_merged.append(candidate)
-            else:
+            elif score >= 0.6:
                 needs_llm_review.append(candidate)
+            # else: score 0.5-0.6, auto-dismissed (too low for LLM judge)
 
             existing_pairs.add((new_rec.id, existing_rec.id))
             existing_pairs.add((existing_rec.id, new_rec.id))

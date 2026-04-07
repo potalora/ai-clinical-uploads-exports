@@ -94,13 +94,13 @@ async def test_login_rate_limiting(client: AsyncClient):
         json={"email": "ratelimit@test.com", "password": "SecurePass123!"},
     )
 
-    for i in range(5):
+    for i in range(login_limiter.max_requests):
         await client.post(
             "/api/v1/auth/login",
             json={"email": "ratelimit@test.com", "password": "SecurePass123!"},
         )
 
-    # 6th request should be rate limited
+    # Next request should be rate limited
     resp = await client.post(
         "/api/v1/auth/login",
         json={"email": "ratelimit@test.com", "password": "SecurePass123!"},
