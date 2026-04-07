@@ -202,7 +202,7 @@ class TestRunUploadDedup:
         mock_db = AsyncMock()
         fuzzy_candidates = [
             {"id": uuid4(), "record_a_id": uuid4(), "record_b_id": uuid4(),
-             "similarity_score": 0.55, "match_reasons": {}, "status": "pending",
+             "similarity_score": 0.65, "match_reasons": {}, "status": "pending",
              "source_upload_id": uuid4()},
         ]
 

@@ -40,7 +40,7 @@ async def test_upload_synthetic_fhir(client: AsyncClient, db_session: AsyncSessi
     assert resp.status_code == 202
     data = resp.json()
     assert "upload_id" in data
-    assert data["status"] == "completed"
+    assert data["status"] in ("completed", "dedup_scanning")
     # Sample bundle has 1 Patient (skipped) + 17 clinical resources = 17 records
     assert data["records_inserted"] == 17
     assert isinstance(data["errors"], list)
@@ -105,7 +105,7 @@ async def test_upload_status(client: AsyncClient, db_session: AsyncSession):
     assert status_resp.status_code == 200
     data = status_resp.json()
     assert data["upload_id"] == upload_id
-    assert data["ingestion_status"] == "completed"
+    assert data["ingestion_status"] in ("completed", "dedup_scanning")
     assert data["record_count"] == 17
     # Fix 4: total_file_count must be present
     assert "total_file_count" in data

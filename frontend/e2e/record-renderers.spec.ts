@@ -1,44 +1,50 @@
 import { test, expect } from "@playwright/test";
-import { getTestAuth, authHeaders, type AuthContext } from "./helpers/auth";
-import { seedTestData, type SeededData } from "./helpers/seed";
+import { browserLogin } from "./helpers/browser-login";
+import { ApiClient } from "./helpers/api-client";
+import { testEmail, TEST_PASSWORD, PATHS } from "./helpers/test-data";
 
-const API_BASE = "http://localhost:8000/api/v1";
-
-let auth: AuthContext;
-let seeded: SeededData;
-
-test.beforeAll(async () => {
-  auth = await getTestAuth();
-  seeded = await seedTestData(auth);
-});
-
-// Helper: fetch a record's HTML by navigating to its detail page
-async function verifyRecordType(
-  page: import("@playwright/test").Page,
-  recordType: string,
-  assertions: (page: import("@playwright/test").Page) => Promise<void>
-) {
-  const ids = seeded.recordsByType[recordType];
-  if (!ids || ids.length === 0) {
-    test.skip();
-    return;
-  }
-
-  // Login
-  await page.goto("/login");
-  await page.fill('input[name="email"]', "test-renderer@test.com");
-  await page.fill('input[name="password"]', "TestPass123!");
-  await page.click('button[type="submit"]');
-  await page.waitForURL(/\/(home|admin|dashboard)/);
-
-  // Navigate to record page
-  await page.goto(`/records/${ids[0]}`);
-  await page.waitForSelector("h1, [data-testid='record-title']", { timeout: 10_000 });
-
-  await assertions(page);
-}
+const email = testEmail("record-renderers");
 
 test.describe("Type-specific Renderers", () => {
+  const api = new ApiClient();
+  let recordsByType: Record<string, string[]> = {};
+
+  test.beforeAll(async () => {
+    await api.register(email, TEST_PASSWORD);
+    await api.login(email, TEST_PASSWORD);
+    const result = await api.uploadStructured(PATHS.fhirBundle, "sample_fhir_bundle.json");
+    await api.pollUploadStatus(result.upload_id, 60_000);
+
+    // Fetch all records grouped by type (page_size=100 covers the full FHIR bundle)
+    const data = await api.getRecords({ page: 1, page_size: 100 });
+    for (const item of data.items) {
+      const type = item.record_type;
+      if (!recordsByType[type]) recordsByType[type] = [];
+      recordsByType[type].push(item.id);
+    }
+  });
+
+  // Helper: login and navigate to a record of a given type
+  async function verifyRecordType(
+    page: import("@playwright/test").Page,
+    recordType: string,
+    assertions: (page: import("@playwright/test").Page) => Promise<void>
+  ) {
+    const ids = recordsByType[recordType];
+    if (!ids || ids.length === 0) {
+      test.skip();
+      return;
+    }
+
+    await browserLogin(page, email, TEST_PASSWORD);
+
+    // Navigate to record page
+    await page.goto(`/records/${ids[0]}`);
+    await page.waitForSelector("h1, [data-testid='record-title']", { timeout: 10_000 });
+
+    await assertions(page);
+  }
+
   test("Condition: shows clinical status badge", async ({ page }) => {
     await verifyRecordType(page, "condition", async (p) => {
       // Should have a clinical status indicator (active/resolved/inactive)
@@ -49,9 +55,9 @@ test.describe("Type-specific Renderers", () => {
 
   test("Lab Observation: displays large numeric value", async ({ page }) => {
     await verifyRecordType(page, "observation", async (p) => {
-      // Should have a large VT323 value display
-      const largeValue = p.locator("[style*='VT323']");
-      await expect(largeValue.first()).toBeVisible({ timeout: 5_000 });
+      // Should have a mono-font value display (JetBrains Mono via --font-mono)
+      const monoValue = p.locator("[style*='font-mono'], .font-mono, [style*='--font-mono']");
+      await expect(monoValue.first()).toBeVisible({ timeout: 5_000 });
     });
   });
 

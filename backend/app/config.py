@@ -54,6 +54,13 @@ class Settings(BaseSettings):
     gemini_summary_max_tokens: int = 8192
     gemini_concurrency_limit: int = 10
 
+    # Extraction pipeline
+    extraction_concurrency: int = 5
+    section_extraction_concurrency: int = 3
+    extraction_timeout_minutes: int = 10
+    extraction_max_retries: int = 3
+    small_doc_threshold: int = 3000
+
     # Redis
     redis_url: str = "redis://localhost:6379/0"
 
@@ -64,6 +71,12 @@ class Settings(BaseSettings):
     max_epic_export_size_mb: int = 5000
     ingestion_batch_size: int = 100
     ingestion_worker_concurrency: int = 1
+
+    # Rate limiting
+    login_rate_limit: int = 30
+    login_rate_window: int = 60
+    register_rate_limit: int = 30
+    register_rate_window: int = 60
 
     # App
     app_env: str = "development"

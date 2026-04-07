@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from app.api.router import api_router
 from app.config import settings
+from app.database import async_session_factory
 from app.middleware.security_headers import SecurityHeadersMiddleware
 
 logging.basicConfig(
@@ -16,6 +19,38 @@ logging.basicConfig(
 
 
 logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup/shutdown lifecycle handler."""
+    # A1: Recover files stuck in 'processing' from previous crash/restart
+    try:
+        async with async_session_factory() as db:
+            result = await db.execute(text(
+                "UPDATE uploaded_files SET ingestion_status = 'pending_extraction', "
+                "processing_started_at = NULL "
+                "WHERE ingestion_status = 'processing' AND file_category = 'unstructured'"
+            ))
+            if result.rowcount:
+                logger.info("Recovered %d stuck files to pending_extraction on startup", result.rowcount)
+            await db.commit()
+    except Exception:
+        logger.exception("Failed to recover stuck files on startup")
+
+    # Start the extraction worker
+    from app.api.upload import start_extraction_worker
+    start_extraction_worker()
+
+    import sys
+    if any("--reload" in arg for arg in sys.argv):
+        logger.warning(
+            "Server started with --reload: extraction worker may restart on file changes. "
+            "Use without --reload for stable extraction processing."
+        )
+
+
+    yield
 
 
 def create_app() -> FastAPI:
@@ -29,6 +64,7 @@ def create_app() -> FastAPI:
         version="0.1.0",
         docs_url="/api/docs" if settings.app_env == "development" else None,
         redoc_url="/api/redoc" if settings.app_env == "development" else None,
+        lifespan=lifespan,
     )
 
     app.add_middleware(SecurityHeadersMiddleware)

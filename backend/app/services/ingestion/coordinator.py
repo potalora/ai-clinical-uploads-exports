@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -139,36 +140,26 @@ async def ingest_file(
         else:
             raise ValueError(f"Unsupported file type: {file_type}")
 
-        # Run dedup scan on newly inserted records
-        from app.services.dedup.orchestrator import run_upload_dedup
-        upload.ingestion_status = "dedup_scanning"
-        await db.commit()
-
-        dedup_summary = await run_upload_dedup(
-            upload.id, patient.id, user_id, db
-        )
-        upload.dedup_summary = dedup_summary.to_dict()
-
-        if dedup_summary.needs_review > 0:
-            upload.ingestion_status = "awaiting_review"
-        elif dedup_summary.auto_merged > 0:
-            upload.ingestion_status = "completed_with_merges"
-        else:
-            upload.ingestion_status = "completed"
-
+        # Set initial completion stats before dedup
         upload.record_count = stats.get("records_inserted", 0)
         upload.ingestion_errors = stats.get("errors", [])
-        upload.processing_completed_at = datetime.now(timezone.utc)
         upload.ingestion_progress = {
             "total_entries": stats.get("total_entries", 0),
             "records_inserted": stats.get("records_inserted", 0),
             "records_skipped": stats.get("records_skipped", 0),
         }
+
+        # Run dedup scan in background so the upload endpoint returns immediately
+        upload.ingestion_status = "dedup_scanning"
         await db.commit()
+
+        asyncio.create_task(
+            _run_dedup_background(upload.id, patient.id, user_id)
+        )
 
         return {
             "upload_id": str(upload.id),
-            "status": "completed",
+            "status": "dedup_scanning",
             "records_inserted": stats.get("records_inserted", 0),
             "errors": stats.get("errors", []),
             "unstructured_uploads": stats.get("unstructured_files", []),
@@ -181,6 +172,54 @@ async def ingest_file(
         upload.processing_completed_at = datetime.now(timezone.utc)
         await db.commit()
         raise
+
+
+async def _run_dedup_background(
+    upload_id: UUID,
+    patient_id: UUID,
+    user_id: UUID,
+) -> None:
+    """Run dedup scanning in the background with its own DB session."""
+    from app.database import async_session_factory
+    from app.services.dedup.orchestrator import run_upload_dedup
+
+    try:
+        async with async_session_factory() as db:
+            upload = await db.get(UploadedFile, upload_id)
+            if not upload:
+                logger.error("Background dedup: upload %s not found", upload_id)
+                return
+
+            dedup_summary = await run_upload_dedup(
+                upload_id, patient_id, user_id, db
+            )
+            upload.dedup_summary = dedup_summary.to_dict()
+
+            if dedup_summary.needs_review > 0:
+                upload.ingestion_status = "awaiting_review"
+            elif dedup_summary.auto_merged > 0:
+                upload.ingestion_status = "completed_with_merges"
+            else:
+                upload.ingestion_status = "completed"
+
+            upload.processing_completed_at = datetime.now(timezone.utc)
+            await db.commit()
+            logger.info(
+                "Background dedup completed for %s: %d candidates, %d auto-merged, %d need review",
+                upload_id, dedup_summary.total_candidates,
+                dedup_summary.auto_merged, dedup_summary.needs_review,
+            )
+    except Exception:
+        logger.exception("Background dedup failed for %s", upload_id)
+        try:
+            async with async_session_factory() as db:
+                upload = await db.get(UploadedFile, upload_id)
+                if upload:
+                    upload.ingestion_status = "completed"
+                    upload.processing_completed_at = datetime.now(timezone.utc)
+                    await db.commit()
+        except Exception:
+            logger.exception("Failed to update upload status after dedup error")
 
 
 async def _ingest_fhir(

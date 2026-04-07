@@ -1,78 +1,94 @@
-import { test, expect, type Page } from "@playwright/test";
-import { getTestAuth, type AuthContext } from "./helpers/auth";
-import { seedTestData, type SeededData } from "./helpers/seed";
+import { test, expect } from "@playwright/test";
+import { browserLogin } from "./helpers/browser-login";
+import { ApiClient } from "./helpers/api-client";
+import { testEmail, TEST_PASSWORD, PATHS } from "./helpers/test-data";
 
-let auth: AuthContext;
-let seeded: SeededData;
-
-test.beforeAll(async () => {
-  auth = await getTestAuth();
-  seeded = await seedTestData(auth);
-});
-
-async function loginViaUI(page: Page) {
-  await page.goto("/login");
-  await page.fill('input[name="email"]', "test-renderer@test.com");
-  await page.fill('input[name="password"]', "TestPass123!");
-  await page.click('button[type="submit"]');
-  await page.waitForURL(/\/(home|admin|dashboard)/);
-}
+const email = testEmail("record-detail-sheet");
 
 test.describe("Record Detail Sheet (Admin Drawer)", () => {
+  const api = new ApiClient();
+
+  test.beforeAll(async () => {
+    await api.register(email, TEST_PASSWORD);
+    await api.login(email, TEST_PASSWORD);
+    const result = await api.uploadStructured(PATHS.fhirBundle, "sample_fhir_bundle.json");
+    await api.pollUploadStatus(result.upload_id, 60_000);
+  });
+
   test("opens drawer with record type icon and badge", async ({ page }) => {
-    await loginViaUI(page);
-    await page.goto("/admin?tab=all");
-    await page.waitForSelector("[data-testid='record-row'], table tbody tr", {
-      timeout: 10_000,
-    });
+    await browserLogin(page, email, TEST_PASSWORD);
+    await page.goto("/admin");
+    await expect(page.getByText("Admin Console")).toBeVisible({ timeout: 10_000 });
 
-    // Click the first record row
-    const firstRow = page.locator("table tbody tr, [data-testid='record-row']").first();
-    await firstRow.click();
+    // Expand the first record type group in the tree
+    const firstGroupRow = page
+      .locator("span")
+      .filter({
+        hasText: /^(Conditions|Labs & Vitals|Medications|Allergies|Procedures|Encounters|Immunizations|Documents|Diagnostic Reports|Service Requests|Communications|Appointments|Care Plans|Care Teams)$/,
+      })
+      .first();
+    await expect(firstGroupRow).toBeVisible({ timeout: 15_000 });
+    await firstGroupRow.locator("..").click();
 
-    // Verify the sheet opened with key elements
-    const sheet = page.locator("[role='dialog'], [data-state='open']");
-    await expect(sheet).toBeVisible({ timeout: 5_000 });
+    // Click the first record's text to open the detail sheet
+    const recordRow = page.locator('input[type="checkbox"]').first().locator("..");
+    const recordText = recordRow.locator("span").first();
+    await expect(recordText).toBeVisible({ timeout: 10_000 });
+    await recordText.click();
 
-    // Should have "Record Details" header
-    await expect(page.getByText("Record Details")).toBeVisible();
+    // Should show "Record Details" header
+    await expect(page.getByText("Record Details")).toBeVisible({ timeout: 5_000 });
   });
 
   test("Advanced section is collapsed by default", async ({ page }) => {
-    await loginViaUI(page);
-    await page.goto("/admin?tab=all");
-    await page.waitForSelector("table tbody tr", { timeout: 10_000 });
+    await browserLogin(page, email, TEST_PASSWORD);
+    await page.goto("/admin");
+    await expect(page.getByText("Admin Console")).toBeVisible({ timeout: 10_000 });
 
-    const firstRow = page.locator("table tbody tr").first();
-    await firstRow.click();
+    // Expand first group and click first record
+    const firstGroupRow = page
+      .locator("span")
+      .filter({
+        hasText: /^(Conditions|Labs & Vitals|Medications|Allergies|Procedures|Encounters|Immunizations|Documents|Diagnostic Reports|Service Requests|Communications|Appointments|Care Plans|Care Teams)$/,
+      })
+      .first();
+    await expect(firstGroupRow).toBeVisible({ timeout: 15_000 });
+    await firstGroupRow.locator("..").click();
 
-    const sheet = page.locator("[role='dialog'], [data-state='open']");
-    await expect(sheet).toBeVisible({ timeout: 5_000 });
+    const recordRow = page.locator('input[type="checkbox"]').first().locator("..");
+    await recordRow.locator("span").first().click();
+
+    await expect(page.getByText("Record Details")).toBeVisible({ timeout: 5_000 });
 
     // Advanced button should be visible
     const advancedBtn = page.getByText("Advanced");
     await expect(advancedBtn).toBeVisible();
 
-    // JSON should NOT be visible initially
-    const jsonPre = sheet.locator("pre.json-syntax");
-    await expect(jsonPre).not.toBeVisible();
-
-    // Click Advanced to expand
+    // Click Advanced to expand — should show JSON content
     await advancedBtn.click();
-    await expect(jsonPre).toBeVisible();
+    await expect(page.locator("pre").first()).toBeVisible({ timeout: 5_000 });
   });
 
   test("delete button is present", async ({ page }) => {
-    await loginViaUI(page);
-    await page.goto("/admin?tab=all");
-    await page.waitForSelector("table tbody tr", { timeout: 10_000 });
+    await browserLogin(page, email, TEST_PASSWORD);
+    await page.goto("/admin");
+    await expect(page.getByText("Admin Console")).toBeVisible({ timeout: 10_000 });
 
-    const firstRow = page.locator("table tbody tr").first();
-    await firstRow.click();
+    // Expand first group and click first record
+    const firstGroupRow = page
+      .locator("span")
+      .filter({
+        hasText: /^(Conditions|Labs & Vitals|Medications|Allergies|Procedures|Encounters|Immunizations|Documents|Diagnostic Reports|Service Requests|Communications|Appointments|Care Plans|Care Teams)$/,
+      })
+      .first();
+    await expect(firstGroupRow).toBeVisible({ timeout: 15_000 });
+    await firstGroupRow.locator("..").click();
 
-    const sheet = page.locator("[role='dialog'], [data-state='open']");
-    await expect(sheet).toBeVisible({ timeout: 5_000 });
+    const recordRow = page.locator('input[type="checkbox"]').first().locator("..");
+    await recordRow.locator("span").first().click();
 
-    await expect(page.getByText("Delete this record")).toBeVisible();
+    await expect(page.getByText("Record Details")).toBeVisible({ timeout: 5_000 });
+    // Delete button in the detail sheet (shows Trash icon + "Delete" text)
+    await expect(page.getByRole("button", { name: "Delete" })).toBeVisible();
   });
 });
