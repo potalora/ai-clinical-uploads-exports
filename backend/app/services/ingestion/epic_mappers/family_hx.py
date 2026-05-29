@@ -6,6 +6,9 @@ from app.services.ingestion.epic_mappers.base import EpicMapper
 class FamilyHxMapper(EpicMapper):
     """Map FAMILY_HX rows to FHIR FamilyMemberHistory resources."""
 
+    source_table = "FAMILY_HX"
+    primary_key_columns = ["PAT_ENC_CSN_ID", "LINE"]
+
     def to_fhir(self, row: dict[str, str]) -> dict | None:
         dx_name = self.safe_get(row, "FAM_MEDICAL_DX_ID_DX_NAME")
         relation = self.safe_get(row, "RELATION_C_NAME")

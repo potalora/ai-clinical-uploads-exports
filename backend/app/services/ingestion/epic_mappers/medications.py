@@ -6,6 +6,9 @@ from app.services.ingestion.epic_mappers.base import EpicMapper
 class OrderMedMapper(EpicMapper):
     """Map ORDER_MED rows to FHIR MedicationRequest resources."""
 
+    source_table = "ORDER_MED"
+    primary_key_columns = ["ORDER_MED_ID"]
+
     def to_fhir(self, row: dict[str, str]) -> dict | None:
         med_name = self.safe_get(row, "DISPLAY_NAME") or self.safe_get(
             row, "MEDICATION_ID_MEDICATION_NAME"

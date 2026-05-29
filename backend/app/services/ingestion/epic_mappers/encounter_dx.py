@@ -6,6 +6,9 @@ from app.services.ingestion.epic_mappers.base import EpicMapper
 class EncounterDxMapper(EpicMapper):
     """Map PAT_ENC_DX rows to FHIR Condition (encounter-diagnosis) resources."""
 
+    source_table = "PAT_ENC_DX"
+    primary_key_columns = ["PAT_ENC_CSN_ID", "LINE"]
+
     def to_fhir(self, row: dict[str, str]) -> dict | None:
         dx_name = self.safe_get(row, "DX_ID_DX_NAME")
         if not dx_name:

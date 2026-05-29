@@ -6,6 +6,9 @@ from app.services.ingestion.epic_mappers.base import EpicMapper
 class ReferralMapper(EpicMapper):
     """Map REFERRAL rows to FHIR ServiceRequest resources."""
 
+    source_table = "REFERRAL"
+    primary_key_columns = ["REFERRAL_ID"]
+
     def to_fhir(self, row: dict[str, str]) -> dict | None:
         reason = self.safe_get(row, "RSN_FOR_RFL_C_NAME")
         referral_prov = self.safe_get(row, "REFERRAL_PROV_ID_PROV_NAME")

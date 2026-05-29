@@ -6,6 +6,9 @@ from app.services.ingestion.epic_mappers.base import EpicMapper
 class VitalsMapper(EpicMapper):
     """Map IP_FLWSHT_MEAS rows to FHIR Observation (vital-signs) resources."""
 
+    source_table = "IP_FLWSHT_MEAS"
+    primary_key_columns = ["FSD_ID", "LINE"]
+
     def to_fhir(self, row: dict[str, str]) -> dict | None:
         measure_name = (
             self.safe_get(row, "FLO_MEAS_NAME")

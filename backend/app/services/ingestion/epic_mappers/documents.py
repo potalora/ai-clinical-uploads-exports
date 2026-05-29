@@ -6,6 +6,9 @@ from app.services.ingestion.epic_mappers.base import EpicMapper
 class DocInformationMapper(EpicMapper):
     """Map DOC_INFORMATION rows to FHIR DocumentReference resources."""
 
+    source_table = "DOC_INFORMATION"
+    primary_key_columns = ["DOC_INFO_ID"]
+
     def to_fhir(self, row: dict[str, str]) -> dict | None:
         doc_type = self.safe_get(row, "DOC_INFO_TYPE_C_NAME")
         if not doc_type:

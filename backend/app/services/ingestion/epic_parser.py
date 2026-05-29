@@ -24,6 +24,7 @@ from app.services.ingestion.epic_mappers.results import OrderResultsMapper
 from app.services.ingestion.epic_mappers.social_hx import SocialHxMapper
 from app.services.ingestion.epic_mappers.vitals import VitalsMapper
 from app.services.ingestion.fhir_parser import build_display_text, map_fhir_resource
+from app.services.ingestion.identity import epic_identity
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +144,15 @@ async def parse_epic_export(
                             "code_display": code_display,
                             "display_text": build_display_text(fhir_resource, resource_type),
                         }
+
+                        ident = epic_identity(
+                            mapper.source_table or table_name,
+                            mapper.primary_key_columns,
+                            row,
+                        )
+                        if ident is not None:
+                            mapped["external_id"] = ident.external_id
+                            mapped["source_system"] = ident.source_system
 
                         batch.append(mapped)
 

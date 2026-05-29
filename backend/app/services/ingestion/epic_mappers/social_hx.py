@@ -6,6 +6,9 @@ from app.services.ingestion.epic_mappers.base import EpicMapper
 class SocialHxMapper(EpicMapper):
     """Map SOCIAL_HX rows to FHIR Observation (social-history) resources."""
 
+    source_table = "SOCIAL_HX"
+    primary_key_columns = ["PAT_ENC_CSN_ID", "CONTACT_DATE"]
+
     def to_fhir(self, row: dict[str, str]) -> dict | None:
         # Social history tables vary; try common column patterns
         hx_type = (

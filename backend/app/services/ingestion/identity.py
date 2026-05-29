@@ -54,6 +54,19 @@ def extract_identity(record: dict[str, Any]) -> Identity | None:
         return None
 
 
+def epic_identity(table: str, pk_columns: list[str], row: dict[str, str]) -> Identity | None:
+    """Build an Identity from an Epic TSV row's primary-key column(s)."""
+    parts: list[str] = []
+    for col in pk_columns:
+        val = (row.get(col) or "").strip()
+        if not val:
+            return None
+        parts.append(val)
+    if not parts:
+        return None
+    return Identity(source_system=f"epic:{table}", external_id="|".join(parts))
+
+
 def _from_fhir(resource: dict[str, Any]) -> Identity | None:
     rtype = resource.get("resourceType")
     if not rtype:

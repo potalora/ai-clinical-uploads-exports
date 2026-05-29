@@ -6,6 +6,9 @@ from app.services.ingestion.epic_mappers.base import EpicMapper
 class ImmuneMapper(EpicMapper):
     """Map IMMUNE rows to FHIR Immunization resources."""
 
+    source_table = "IMMUNE"
+    primary_key_columns = ["IMMUNE_ID"]
+
     def to_fhir(self, row: dict[str, str]) -> dict | None:
         vaccine_name = self.safe_get(row, "IMMUNZATN_ID_NAME")
         if not vaccine_name:

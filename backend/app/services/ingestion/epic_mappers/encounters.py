@@ -6,6 +6,9 @@ from app.services.ingestion.epic_mappers.base import EpicMapper
 class PatEncMapper(EpicMapper):
     """Map PAT_ENC rows to FHIR Encounter resources."""
 
+    source_table = "PAT_ENC"
+    primary_key_columns = ["PAT_ENC_CSN_ID"]
+
     def to_fhir(self, row: dict[str, str]) -> dict | None:
         contact_date = self.parse_epic_date(self.safe_get(row, "CONTACT_DATE"))
         if not contact_date:

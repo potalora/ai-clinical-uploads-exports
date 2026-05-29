@@ -140,3 +140,17 @@ def test_cda_nullflavor_id_does_not_crash():
         "fhir_resource": {"resourceType": "Practitioner", "id": {"nullFlavor": "UNK"}},
     }
     assert extract_identity(rec) is None
+
+
+def test_epic_identity_from_row():
+    from app.services.ingestion.identity import epic_identity
+
+    row = {"ORDER_MED_ID": "555", "ORDER_ID": "9", "LINE": "2"}
+    ident = epic_identity("ORDER_MED", ["ORDER_MED_ID", "LINE"], row)
+    assert ident == Identity(source_system="epic:ORDER_MED", external_id="555|2")
+
+
+def test_epic_identity_missing_pk_returns_none():
+    from app.services.ingestion.identity import epic_identity
+
+    assert epic_identity("ORDER_MED", ["ORDER_MED_ID"], {"OTHER": "x"}) is None

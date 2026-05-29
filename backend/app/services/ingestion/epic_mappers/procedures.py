@@ -6,6 +6,9 @@ from app.services.ingestion.epic_mappers.base import EpicMapper
 class OrderProcMapper(EpicMapper):
     """Map ORDER_PROC rows to FHIR Procedure resources."""
 
+    source_table = "ORDER_PROC"
+    primary_key_columns = ["ORDER_PROC_ID"]
+
     def to_fhir(self, row: dict[str, str]) -> dict | None:
         # Try multiple column name patterns for procedure name
         proc_name = (
