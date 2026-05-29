@@ -1396,75 +1396,124 @@ git commit -m "test: incremental re-ingest convergence (insert/update/skip)"
 
 ---
 
-## Task 12: Fidelity test — real extract re-ingest delta = 0
+## Task 12: Fidelity tests — real cumulative extracts
+
+Two real IHE XDM exports of the **same patient (`Pedro1`)** exist on this machine, ~7 weeks apart — a genuine cumulative pair (April = 2,859 entry ids, May = 2,934; May ⊃ April plus new records):
+- **April (older):** `test_data/HealthSummary_Apr_05_2026/IHE_XDM/Pedro1/`
+- **May (newer):** `HealthSummary_May_29_2026/IHE_XDM/Pedro1/` (repo root)
+
+Both are gitignored. From `backend/tests/fidelity/test_x.py`, `Path(__file__).resolve().parents[3]` is the repo root. These drive the two most important tests: (a) re-ingesting the *same* extract is a pure no-op (delta 0), and (b) ingesting April then May recognizes the overlap — inserting only records new since April, NOT doubling.
 
 **Files:**
 - Create: `backend/tests/fidelity/test_incremental_fidelity.py`
 
-- [ ] **Step 1: Write the fidelity test**
+- [ ] **Step 1: Write the fidelity tests**
 
 ```python
 # backend/tests/fidelity/test_incremental_fidelity.py
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 
 import pytest
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 
 from app.models.record import HealthRecord
+from app.models.uploaded_file import UploadedFile
 
-_XDM_DIR = Path(__file__).resolve().parents[3] / "HealthSummary_May_29_2026"
+_ROOT = Path(__file__).resolve().parents[3]
+_MAY = _ROOT / "HealthSummary_May_29_2026" / "IHE_XDM" / "Pedro1"
+_APR = _ROOT / "test_data" / "HealthSummary_Apr_05_2026" / "IHE_XDM" / "Pedro1"
+
+
+async def _ingest(db, patient, xdm_dir: Path, label: str) -> dict:
+    """Ingest one XDM package for the patient; return the coordinator stats."""
+    from app.services.ingestion.coordinator import _ingest_xdm
+
+    up = UploadedFile(id=uuid.uuid4(), user_id=patient.user_id, filename=label,
+                      file_category="structured", ingestion_status="processing",
+                      storage_path=str(xdm_dir / "METADATA.XML"))
+    db.add(up)
+    await db.commit()
+    stats = await _ingest_xdm(db, patient.user_id, patient.id, up.id, xdm_dir, xdm_dir / "METADATA.XML")
+    await db.commit()
+    return stats
+
+
+async def _count(db, patient) -> int:
+    return (await db.execute(
+        select(func.count()).select_from(HealthRecord).where(HealthRecord.patient_id == patient.id)
+    )).scalar()
 
 
 @pytest.mark.fidelity
-@pytest.mark.skipif(not _XDM_DIR.exists(), reason="real XDM extract not present")
+@pytest.mark.skipif(not _MAY.exists(), reason="real May XDM extract not present")
 @pytest.mark.asyncio
-async def test_real_extract_reingest_is_idempotent(db_session, create_test_patient, tmp_path):
-    """Ingest the real HealthSummary XDM twice; second pass adds 0 records."""
-    from app.services.ingestion.coordinator import _ingest_xdm
-    from app.models.uploaded_file import UploadedFile
-    import uuid
-
-    patient = await create_test_patient(db_session, "00000000-0000-0000-0000-0000000000cc")
-    xdm_dir = _XDM_DIR / "IHE_XDM" / "Pedro1"
-    metadata = xdm_dir / "METADATA.XML"
-
-    up1 = UploadedFile(id=uuid.uuid4(), user_id=patient.user_id, filename="x1",
-                       file_category="structured", ingestion_status="processing",
-                       storage_path=str(metadata))
-    db_session.add(up1); await db_session.commit()
-    await _ingest_xdm(db_session, patient.user_id, patient.id, up1.id, xdm_dir, metadata)
-    await db_session.commit()
-
-    n1 = (await db_session.execute(
-        select(func.count()).select_from(HealthRecord).where(HealthRecord.patient_id == patient.id)
-    )).scalar()
+async def test_same_extract_reingest_is_noop(db_session, create_test_patient):
+    """Ingesting the identical extract twice adds zero records (pure idempotency)."""
+    patient = await create_test_patient(db_session, "00000000-0000-0000-0000-0000000000c1")
+    await _ingest(db_session, patient, _MAY, "may-1")
+    n1 = await _count(db_session, patient)
     assert n1 > 0
 
-    up2 = UploadedFile(id=uuid.uuid4(), user_id=patient.user_id, filename="x2",
-                       file_category="structured", ingestion_status="processing",
-                       storage_path=str(metadata))
-    db_session.add(up2); await db_session.commit()
-    await _ingest_xdm(db_session, patient.user_id, patient.id, up2.id, xdm_dir, metadata)
-    await db_session.commit()
-
-    n2 = (await db_session.execute(
-        select(func.count()).select_from(HealthRecord).where(HealthRecord.patient_id == patient.id)
-    )).scalar()
+    s2 = await _ingest(db_session, patient, _MAY, "may-2")
+    n2 = await _count(db_session, patient)
     assert n2 == n1, f"re-ingest changed record count: {n1} -> {n2}"
+    assert s2.get("records_inserted", 0) == 0, f"expected 0 new inserts, got {s2}"
+
+
+@pytest.mark.fidelity
+@pytest.mark.skipif(not (_APR.exists() and _MAY.exists()), reason="real Apr+May extracts not present")
+@pytest.mark.asyncio
+async def test_cumulative_apr_then_may_recognizes_overlap(db_session, create_test_patient):
+    """April then May: the May export re-includes April's records.
+
+    With idempotency, the final count must be far below naive April+May, because
+    the overlapping records are recognized by stable id (skip or update), not
+    re-inserted. We assert the May pass inserts strictly fewer records than it
+    contains, and the union is bounded well under the sum.
+    """
+    patient = await create_test_patient(db_session, "00000000-0000-0000-0000-0000000000c2")
+
+    s_apr = await _ingest(db_session, patient, _APR, "apr")
+    n_apr = await _count(db_session, patient)
+    assert n_apr > 0
+
+    s_may = await _ingest(db_session, patient, _MAY, "may")
+    n_final = await _count(db_session, patient)
+
+    apr_inserted = s_apr.get("records_inserted", 0)
+    may_inserted = s_may.get("records_inserted", 0)
+    may_unchanged = s_may.get("records_unchanged", 0)
+
+    # The May pass must recognize substantial overlap (most records already seen).
+    assert may_unchanged > 0, f"May recognized no overlap with April: {s_may}"
+    # And must NOT naively double the corpus.
+    assert n_final < apr_inserted + may_inserted + may_unchanged, (
+        f"corpus doubled — idempotency not engaging: apr={n_apr} final={n_final} stats={s_may}"
+    )
+    # Most of April's records should reappear in May and be recognized.
+    assert n_final < 2 * n_apr, f"final {n_final} too large vs april {n_apr}; overlap not deduped"
 ```
 
-- [ ] **Step 2: Run (requires real extract present)**
+- [ ] **Step 2: Register the `fidelity` marker (if not already)**
 
-Run: `cd backend && python -m pytest tests/fidelity/test_incremental_fidelity.py -v -m fidelity -rs`
-Expected: PASS (or SKIP if extract absent). If the count grows, the CDA identity path is not matching — revisit Task 4 (likely the probe-failed branch is needed).
+Ensure `backend/pyproject.toml` `[tool.pytest.ini_options]` `markers` list contains:
+```toml
+    "fidelity: marks tests requiring real user-provided data",
+```
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 3: Run (requires real extracts present)**
+
+Run: `cd backend && .venv/bin/python -m pytest tests/fidelity/test_incremental_fidelity.py -v -m fidelity -rs`
+Expected: PASS (or SKIP if extracts absent). If `test_same_extract_reingest_is_noop` shows the count growing, the CDA identity path is not matching — capture the actual `records_inserted` and the identities produced for a few CDA resources, and revisit Task 4.
+
+- [ ] **Step 4: Commit**
 
 ```bash
-cd backend && git add tests/fidelity/test_incremental_fidelity.py
-git commit -m "test: real-extract re-ingest idempotency fidelity"
+cd backend && git add tests/fidelity/test_incremental_fidelity.py pyproject.toml
+git commit -m "test: real cumulative-extract (Apr->May) idempotency fidelity"
 ```
 
 ---
@@ -1554,4 +1603,26 @@ git commit -m "chore: lint + regression pass for idempotent ingestion"
 
 - **Spec coverage:** behavior contract → Tasks 7/8/11; data model → Task 6; identity per format → Tasks 3/4/5; content hash → Task 2; upsert flow + wiring → Tasks 8/9; backfill → Task 10; error handling (never-raise, user-scoped, atomic) → Tasks 3/8; test strategy → Tasks 2-13; TDD-gap audit → Task 13; CDA risk spike → Task 1. All covered.
 - **Phase 2 (unstructured content-hash idempotency)** is intentionally out of scope; `content_hash.py` (Task 2) is built reusable for it.
-- **Open implementation-time check:** Epic PK column names in Task 5 must be verified against the real export headers; adjust `primary_key_columns` if they differ.
+- **Open implementation-time check:** Epic PK column names in Task 5 must be verified against the real export headers in `test_data/Requested Record/EHITables/` (e.g. `head -1 PROBLEM_LIST.tsv` → confirmed `PROBLEM_LIST_ID`); adjust `primary_key_columns` if any differ.
+
+---
+
+## Real Test Data Inventory (on this machine, all gitignored)
+
+| Path | What | Used by |
+|------|------|---------|
+| `HealthSummary_May_29_2026/IHE_XDM/Pedro1/` | Newer IHE XDM extract (2,934 entry ids) | Task 12 (a)(b) |
+| `test_data/HealthSummary_Apr_05_2026/IHE_XDM/Pedro1/` | Older IHE XDM extract, **same patient** (2,859 entry ids) | Task 12 (b) cumulative test |
+| `test_data/EhiExport-22259/ccd_*.xml` + `fhir_*.json` | CCD **and** FHIR JSON of the **same export** | Cross-format coverage (Task 12 optional extension) |
+| `test_data/Requested Record/EHITables/*.tsv` | Real Epic EHI Tables export (hundreds of TSVs) | Task 5 PK verification |
+| `test_data/note_361370_*.pdf` | Clinical note PDF | Phase 2 (unstructured) |
+| Dev DB `medtimeline`, user `6b180d0a-…` (3,447 records) | A real populated user | Manual end-to-end validation |
+
+## Validation Plan (post-build, manual — the user runs the app)
+
+After the automated suite is green, validate against the real app (per project's Feature Verification Pattern — API first, then frontend):
+
+1. **Same-extract no-op:** Re-upload `HealthSummary_May_29_2026` for a user who already has it → upload status reports `records_inserted: 0`, `records_unchanged: N`; admin record count unchanged; no new dedup candidates.
+2. **Cumulative growth:** For a user seeded with the April extract, upload the May extract → only the new-since-April records insert; overlap reported as unchanged/updated.
+3. **Cross-format (optional):** Upload `EhiExport-22259` CCD then its FHIR JSON → identity gate won't match across formats (different id systems), so the existing content-dedup pipeline should catch the overlap; confirm no duplicate explosion.
+4. **Existing populated user:** Pick the dev-DB user `6b180d0a-…` (3,447 records); re-upload one of their prior extracts → confirm convergence rather than duplication.
