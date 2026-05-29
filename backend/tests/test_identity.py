@@ -92,3 +92,51 @@ def test_unknown_format_returns_none():
 def test_extraction_never_raises_on_bad_input():
     assert extract_identity({"source_format": "fhir_r4"}) is None
     assert extract_identity({"source_format": "fhir_r4", "fhir_resource": None}) is None
+
+
+def test_cda_identifier_with_urn_oid():
+    rec = {
+        "source_format": "cda_r2",
+        "fhir_resource": {
+            "resourceType": "Condition",
+            "id": "881e0b55-1111-2222-3333-444455556666",  # renderer UUID, ignored
+            "identifier": [{"system": "urn:oid:1.2.840.114350.1.13.516.2.7.2.768076", "value": "26510156"}],
+        },
+    }
+    ident = extract_identity(rec)
+    assert ident == Identity(
+        source_system="urn:oid:1.2.840.114350.1.13.516.2.7.2.768076",
+        external_id="Condition/26510156",
+    )
+
+
+def test_cda_npi_root_is_not_used_as_identity():
+    """Provider NPI (urn:oid:2.16.840.1.113883.4.6) must not become the record identity."""
+    rec = {
+        "source_format": "cda_r2",
+        "fhir_resource": {
+            "resourceType": "Practitioner",
+            "identifier": [{"system": "urn:oid:2.16.840.1.113883.4.6", "value": "1234567890"}],
+        },
+    }
+    assert extract_identity(rec) is None
+
+
+def test_cda_person_root_is_not_used_as_identity():
+    rec = {
+        "source_format": "cda_r2",
+        "fhir_resource": {
+            "resourceType": "Condition",
+            "identifier": [{"system": "urn:oid:2.16.840.1.113883.4.2", "value": "999"}],
+        },
+    }
+    # Only non-act identifier present, and id absent -> None
+    assert extract_identity(rec) is None
+
+
+def test_cda_nullflavor_id_does_not_crash():
+    rec = {
+        "source_format": "cda_r2",
+        "fhir_resource": {"resourceType": "Practitioner", "id": {"nullFlavor": "UNK"}},
+    }
+    assert extract_identity(rec) is None

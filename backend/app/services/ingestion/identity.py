@@ -71,6 +71,28 @@ def _from_fhir(resource: dict[str, Any]) -> Identity | None:
     return None
 
 
+def _strip_oid(system: str | None) -> str:
+    """Normalize a FHIR system to a bare OID for root comparison."""
+    s = system or ""
+    return s[len("urn:oid:"):] if s.startswith("urn:oid:") else s
+
+
 def _from_cda(resource: dict[str, Any]) -> Identity | None:
-    """CDA-derived FHIR identity. Refined in a later task; delegates for now."""
-    return _from_fhir(resource)
+    rtype = resource.get("resourceType")
+    if not rtype:
+        return None
+    identifiers = resource.get("identifier")
+    if isinstance(identifiers, list):
+        for ident in identifiers:
+            if not isinstance(ident, dict):
+                continue
+            system = ident.get("system")
+            value = ident.get("value")
+            if not value or _strip_oid(system) in CDA_NON_ACT_ROOTS:
+                continue
+            return Identity(source_system=str(system or "cda"), external_id=f"{rtype}/{value}")
+    rid = resource.get("id")
+    # Ignore renderer UUIDs and non-string ids (e.g. {"nullFlavor": "UNK"}).
+    if isinstance(rid, str) and rid and "-" not in rid:
+        return Identity(source_system="cda", external_id=f"{rtype}/{rid}")
+    return None
