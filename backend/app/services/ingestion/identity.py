@@ -1,0 +1,76 @@
+"""Stable source-identity extraction for incremental (idempotent) ingestion.
+
+Given a parsed record dict, derive a `(source_system, external_id)` pair that
+uniquely and stably identifies the upstream record, so that a re-uploaded
+cumulative extract can be matched against records already in the database.
+
+Returns None when no stable identity can be derived; such records fall through
+to the existing content/fuzzy dedup pipeline unchanged.
+"""
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# CDA <id> roots that identify people/providers, not clinical acts.
+CDA_NON_ACT_ROOTS = frozenset({
+    "2.16.840.1.113883.4.6",  # NPI (provider)
+    "2.16.840.1.113883.4.2",  # SSN-ish / person
+})
+
+
+@dataclass(frozen=True)
+class Identity:
+    """A stable upstream identity for a health record."""
+
+    source_system: str
+    external_id: str
+
+
+def extract_identity(record: dict[str, Any]) -> Identity | None:
+    """Derive a stable identity from a parsed record dict, or None."""
+    try:
+        # 1. Explicit fields win (Epic parser sets these from table PKs).
+        ext = record.get("external_id")
+        sys = record.get("source_system")
+        if ext and sys:
+            return Identity(source_system=str(sys), external_id=str(ext))
+
+        source_format = record.get("source_format")
+        resource = record.get("fhir_resource")
+        if not isinstance(resource, dict):
+            return None
+
+        if source_format == "fhir_r4":
+            return _from_fhir(resource)
+        if source_format == "cda_r2":
+            return _from_cda(resource)
+        return None
+    except Exception:  # never break ingestion on identity extraction
+        logger.exception("identity extraction failed; treating as no-identity")
+        return None
+
+
+def _from_fhir(resource: dict[str, Any]) -> Identity | None:
+    rtype = resource.get("resourceType")
+    if not rtype:
+        return None
+    identifiers = resource.get("identifier")
+    if isinstance(identifiers, list) and identifiers:
+        first = identifiers[0]
+        value = first.get("value")
+        system = first.get("system") or "fhir"
+        if value:
+            return Identity(source_system=str(system), external_id=f"{rtype}/{value}")
+    rid = resource.get("id")
+    if rid:
+        return Identity(source_system="fhir", external_id=f"{rtype}/{rid}")
+    return None
+
+
+def _from_cda(resource: dict[str, Any]) -> Identity | None:
+    """CDA-derived FHIR identity. Refined in a later task; delegates for now."""
+    return _from_fhir(resource)

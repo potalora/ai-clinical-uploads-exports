@@ -41,3 +41,54 @@ def test_cda_renderer_preserves_source_id():
         "CcdaRenderer dropped source <id>; identity.py CDA branch needs a "
         "direct-XML fallback (parse act <id root extension>)."
     )
+
+
+from app.services.ingestion.identity import Identity, extract_identity
+
+
+def test_explicit_fields_take_precedence():
+    rec = {
+        "source_format": "epic_ehi",
+        "external_id": "ORDER_MED_123",
+        "source_system": "epic:ORDER_MED",
+        "fhir_resource": {"resourceType": "MedicationRequest", "id": "ignored"},
+    }
+    ident = extract_identity(rec)
+    assert ident == Identity(source_system="epic:ORDER_MED", external_id="ORDER_MED_123")
+
+
+def test_fhir_resource_id():
+    rec = {
+        "source_format": "fhir_r4",
+        "fhir_resource": {"resourceType": "Condition", "id": "cond-1"},
+    }
+    ident = extract_identity(rec)
+    assert ident == Identity(source_system="fhir", external_id="Condition/cond-1")
+
+
+def test_fhir_identifier_preferred_over_id():
+    rec = {
+        "source_format": "fhir_r4",
+        "fhir_resource": {
+            "resourceType": "Condition",
+            "id": "gen-uuid",
+            "identifier": [{"system": "urn:epic", "value": "PROB-9"}],
+        },
+    }
+    ident = extract_identity(rec)
+    assert ident == Identity(source_system="urn:epic", external_id="Condition/PROB-9")
+
+
+def test_fhir_no_id_returns_none():
+    rec = {"source_format": "fhir_r4", "fhir_resource": {"resourceType": "Condition"}}
+    assert extract_identity(rec) is None
+
+
+def test_unknown_format_returns_none():
+    rec = {"source_format": "mystery", "fhir_resource": {"resourceType": "X", "id": "1"}}
+    assert extract_identity(rec) is None
+
+
+def test_extraction_never_raises_on_bad_input():
+    assert extract_identity({"source_format": "fhir_r4"}) is None
+    assert extract_identity({"source_format": "fhir_r4", "fhir_resource": None}) is None
