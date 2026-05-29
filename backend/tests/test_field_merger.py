@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 from app.services.dedup.field_merger import apply_field_update, revert_field_update
+from app.services.ingestion.content_hash import content_hash
 
 
 def _make_record(fhir_resource: dict, record_type: str = "medication", display_text: str = "Test"):
@@ -121,3 +122,27 @@ class TestRevertFieldUpdate:
 
         revert_field_update(rec)
         assert rec.fhir_resource["code"]["text"] == "Test"
+
+    def test_revert_recomputes_content_hash(self):
+        """After reverting, content_hash must match the NEW (reverted) resource,
+        not the stale pre-revert resource."""
+        rec = _make_record({
+            "resourceType": "MedicationRequest",
+            "dosageInstruction": [{"text": "1000mg daily"}],
+        })
+        # Stale hash from before revert (the post-merge resource).
+        rec.content_hash = content_hash(rec.fhir_resource)
+        rec.merge_metadata = {
+            "previous_values": {
+                "dosageInstruction": [{"text": "500mg daily"}],
+            },
+            "fields_updated": ["dosageInstruction"],
+        }
+
+        revert_field_update(rec)
+
+        # Hash now reflects the reverted resource, not the stale one.
+        assert rec.content_hash == content_hash(rec.fhir_resource)
+        assert rec.content_hash == content_hash(
+            {"resourceType": "MedicationRequest", "dosageInstruction": [{"text": "500mg daily"}]}
+        )

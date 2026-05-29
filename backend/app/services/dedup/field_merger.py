@@ -4,6 +4,7 @@ import copy
 import logging
 from datetime import datetime, timezone
 
+from app.services.ingestion.content_hash import content_hash
 from app.services.ingestion.fhir_parser import build_display_text
 
 logger = logging.getLogger(__name__)
@@ -100,4 +101,5 @@ def revert_field_update(record) -> None:
             resource[field] = copy.deepcopy(old_value)
 
     record.fhir_resource = resource
+    record.content_hash = content_hash(record.fhir_resource)
     record.merge_metadata = None

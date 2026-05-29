@@ -153,3 +153,25 @@ def test_epic_identity_missing_pk_returns_none():
     from app.services.ingestion.identity import epic_identity
 
     assert epic_identity("ORDER_MED", ["ORDER_MED_ID"], {"OTHER": "x"}) is None
+
+
+def test_epic_identity_table_drives_source_system():
+    """The table argument (real TSV stem) must drive source_system so that
+    PROBLEM_LIST_ALL is not collapsed into PROBLEM_LIST."""
+    from app.services.ingestion.identity import epic_identity
+
+    ident = epic_identity("PROBLEM_LIST_ALL", ["PROBLEM_LIST_ID"], {"PROBLEM_LIST_ID": "7"})
+    assert ident == Identity(source_system="epic:PROBLEM_LIST_ALL", external_id="7")
+
+
+def test_epic_identity_problem_list_vs_all_are_distinct():
+    """Same PROBLEM_LIST_ID across PROBLEM_LIST and PROBLEM_LIST_ALL must yield
+    DIFFERENT identities (no silent collapse / record loss)."""
+    from app.services.ingestion.identity import epic_identity
+
+    row = {"PROBLEM_LIST_ID": "7"}
+    plain = epic_identity("PROBLEM_LIST", ["PROBLEM_LIST_ID"], row)
+    all_rows = epic_identity("PROBLEM_LIST_ALL", ["PROBLEM_LIST_ID"], row)
+    assert plain == Identity(source_system="epic:PROBLEM_LIST", external_id="7")
+    assert all_rows == Identity(source_system="epic:PROBLEM_LIST_ALL", external_id="7")
+    assert plain != all_rows

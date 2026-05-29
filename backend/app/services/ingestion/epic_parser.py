@@ -22,7 +22,7 @@ from app.services.ingestion.epic_mappers.referrals import ReferralMapper
 from app.services.ingestion.epic_mappers.results import OrderResultsMapper
 from app.services.ingestion.epic_mappers.social_hx import SocialHxMapper
 from app.services.ingestion.epic_mappers.vitals import VitalsMapper
-from app.services.ingestion.fhir_parser import build_display_text, map_fhir_resource
+from app.services.ingestion.fhir_parser import build_display_text
 from app.services.ingestion.idempotent_inserter import idempotent_insert_records
 from app.services.ingestion.identity import epic_identity
 
@@ -146,7 +146,7 @@ async def parse_epic_export(
                         }
 
                         ident = epic_identity(
-                            mapper.source_table or table_name,
+                            table_name,
                             mapper.primary_key_columns,
                             row,
                         )
