@@ -18,6 +18,20 @@ def _rec(fmt="fhir_r4", rid="c1", code="active"):
     }
 
 
+def _assert_inserted_invariant(stats: dict) -> None:
+    assert stats["inserted"] == len(stats["inserted_records"])
+
+
+def _cond(patient, rid, code, fmt="fhir_r4"):
+    return {
+        "user_id": patient.user_id, "patient_id": patient.id, "source_file_id": None,
+        "record_type": "condition", "fhir_resource_type": "Condition",
+        "fhir_resource": {"resourceType": "Condition", "id": rid,
+                          "clinicalStatus": {"coding": [{"code": code}]}},
+        "source_format": fmt, "display_text": "Cond", "status": code,
+    }
+
+
 def test_new_record_is_insert():
     plan = plan_batch([_rec(rid="c1")], existing={})
     assert [p.action for p in plan] == ["insert"]
@@ -85,10 +99,12 @@ async def test_insert_then_reingest_identical_is_unchanged(client, db_session):
 
     s1 = await idempotent_insert_records(db_session, batch())
     await db_session.commit()
+    _assert_inserted_invariant(s1)
     assert s1["inserted"] == 1 and s1["unchanged"] == 0
 
     s2 = await idempotent_insert_records(db_session, batch())
     await db_session.commit()
+    _assert_inserted_invariant(s2)
     assert s2["inserted"] == 0 and s2["unchanged"] == 1
 
     rows = (await db_session.execute(select(HealthRecord))).scalars().all()
@@ -110,10 +126,12 @@ async def test_changed_reingest_updates_and_snapshots(client, db_session):
             "source_format": "fhir_r4", "display_text": "Cond", "status": code,
         }]
 
-    await idempotent_insert_records(db_session, batch("active"))
+    s1 = await idempotent_insert_records(db_session, batch("active"))
     await db_session.commit()
+    _assert_inserted_invariant(s1)
     s2 = await idempotent_insert_records(db_session, batch("resolved"))
     await db_session.commit()
+    _assert_inserted_invariant(s2)
     assert s2["updated"] == 1
 
     row = (await db_session.execute(select(HealthRecord))).scalars().one()
@@ -123,3 +141,128 @@ async def test_changed_reingest_updates_and_snapshots(client, db_session):
     versions = (await db_session.execute(select(RecordVersion))).scalars().all()
     assert len(versions) == 1  # the prior (active) snapshot
     assert versions[0].fhir_resource["clinicalStatus"]["coding"][0]["code"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_within_batch_update_pending_db_level(client, db_session):
+    from app.services.ingestion.idempotent_inserter import idempotent_insert_records
+    _, uid = await auth_headers(client)
+    patient = await create_test_patient(db_session, uid)
+
+    batch = [_cond(patient, "dup", "active"), _cond(patient, "dup", "resolved")]
+    stats = await idempotent_insert_records(db_session, batch)
+    await db_session.commit()
+
+    _assert_inserted_invariant(stats)
+    assert stats["inserted"] == 1
+    assert stats["updated"] == 0
+    assert stats["unchanged"] == 0
+
+    rows = (await db_session.execute(select(HealthRecord))).scalars().all()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.version == 2
+    assert row.fhir_resource["clinicalStatus"]["coding"][0]["code"] == "resolved"
+
+    versions = (await db_session.execute(select(RecordVersion))).scalars().all()
+    assert len(versions) == 1
+    assert versions[0].record_id == row.id
+    assert versions[0].version == 1
+    assert versions[0].fhir_resource["clinicalStatus"]["coding"][0]["code"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_mixed_identity_and_no_identity_batch(client, db_session):
+    from app.services.ingestion.idempotent_inserter import idempotent_insert_records
+    _, uid = await auth_headers(client)
+    patient = await create_test_patient(db_session, uid)
+
+    identified = _cond(patient, "id-1", "active")
+    no_identity = {
+        "user_id": patient.user_id, "patient_id": patient.id, "source_file_id": None,
+        "record_type": "condition", "fhir_resource_type": "Condition",
+        "fhir_resource": {"resourceType": "Condition",
+                          "clinicalStatus": {"coding": [{"code": "active"}]}},
+        "source_format": "fhir_r4", "display_text": "Cond", "status": "active",
+    }
+
+    stats = await idempotent_insert_records(db_session, [identified, no_identity])
+    await db_session.commit()
+    _assert_inserted_invariant(stats)
+    assert stats["inserted"] == 2
+
+    rows = (await db_session.execute(select(HealthRecord))).scalars().all()
+    assert len(rows) == 2
+
+    s2 = await idempotent_insert_records(db_session, [_cond(patient, "id-1", "active")])
+    await db_session.commit()
+    _assert_inserted_invariant(s2)
+    assert s2["unchanged"] == 1
+    assert s2["inserted"] == 0
+
+
+@pytest.mark.asyncio
+async def test_multi_record_batch_partitions_correctly(client, db_session):
+    from app.services.ingestion.idempotent_inserter import idempotent_insert_records
+    _, uid = await auth_headers(client)
+    patient = await create_test_patient(db_session, uid)
+
+    first = [
+        _cond(patient, "p1", "active"),
+        _cond(patient, "p2", "active"),
+        _cond(patient, "p3", "active"),
+    ]
+    s1 = await idempotent_insert_records(db_session, first)
+    await db_session.commit()
+    _assert_inserted_invariant(s1)
+    assert s1["inserted"] == 3
+
+    second = [
+        _cond(patient, "p1", "active"),  # identical -> unchanged
+        _cond(patient, "p2", "resolved"),  # changed -> update
+        _cond(patient, "p4", "active"),  # brand-new -> insert
+    ]
+    s2 = await idempotent_insert_records(db_session, second)
+    await db_session.commit()
+    _assert_inserted_invariant(s2)
+    assert s2["inserted"] == 1
+    assert s2["updated"] == 1
+    assert s2["unchanged"] == 1
+
+    rows = (await db_session.execute(select(HealthRecord))).scalars().all()
+    assert len(rows) == 4
+
+    versions = (await db_session.execute(select(RecordVersion))).scalars().all()
+    assert len(versions) == 1
+
+
+@pytest.mark.asyncio
+async def test_third_ingest_after_update_is_unchanged(client, db_session):
+    from app.services.ingestion.idempotent_inserter import idempotent_insert_records
+    _, uid = await auth_headers(client)
+    patient = await create_test_patient(db_session, uid)
+
+    s1 = await idempotent_insert_records(db_session, [_cond(patient, "c", "active")])
+    await db_session.commit()
+    _assert_inserted_invariant(s1)
+
+    s2 = await idempotent_insert_records(db_session, [_cond(patient, "c", "resolved")])
+    await db_session.commit()
+    _assert_inserted_invariant(s2)
+    assert s2["updated"] == 1
+
+    row = (await db_session.execute(select(HealthRecord))).scalars().one()
+    assert row.version == 2
+
+    s3 = await idempotent_insert_records(db_session, [_cond(patient, "c", "resolved")])
+    await db_session.commit()
+    _assert_inserted_invariant(s3)
+    assert s3["unchanged"] == 1
+    assert s3["inserted"] == 0
+    assert s3["updated"] == 0
+
+    row = (await db_session.execute(select(HealthRecord))).scalars().one()
+    assert row.version == 2
+
+    versions = (await db_session.execute(select(RecordVersion))).scalars().all()
+    assert len(versions) == 1

@@ -57,7 +57,17 @@ def plan_batch(records: list[dict[str, Any]], existing: ExistingMap) -> list[Pla
             if plans[prior_idx].content_hash == chash:
                 plans.append(Plan(rec, "skip", ident, chash))
             else:
-                plans.append(Plan(rec, "update_pending", ident, chash, existing_id=prior_idx))
+                prior = plans[prior_idx]
+                plans.append(
+                    Plan(
+                        rec,
+                        "update_pending",
+                        ident,
+                        chash,
+                        existing_id=prior_idx,
+                        new_version=prior.new_version + 1,
+                    )
+                )
             continue
 
         seen_in_batch[key] = len(plans)
@@ -131,7 +141,12 @@ async def idempotent_insert_records(db: AsyncSession, records: list[dict[str, An
     if not records:
         return {"inserted": 0, "updated": 0, "unchanged": 0, "inserted_records": []}
 
-    user_id = records[0]["user_id"]
+    user_ids = {r["user_id"] for r in records}
+    if len(user_ids) != 1:
+        raise ValueError(
+            f"idempotent_insert_records requires a single user per batch, got {len(user_ids)}"
+        )
+    user_id = next(iter(user_ids))
     idents = [i for i in (extract_identity(r) for r in records) if i is not None]
     existing = await _load_existing(db, user_id, idents)
     plans = plan_batch(records, existing)
@@ -152,16 +167,20 @@ async def idempotent_insert_records(db: AsyncSession, records: list[dict[str, An
         elif p.action == "update_pending":
             target = pending_rows.get(p.existing_id)
             if target is not None:
-                _snapshot(db, target)
-                _apply_update(target, p)
-                updated += 1
-                inserted -= 1  # the insert it supersedes no longer counts as a fresh insert
+                _snapshot(db, target)  # captures prior in-batch state (version 1, active)
+                _apply_update(target, p)  # last content wins; sets version = p.new_version (2)
+                # net effect remains ONE inserted row; do NOT decrement inserted,
+                # do NOT count as updated
+            else:
+                logger.warning("update_pending: pending row %s missing", p.existing_id)
         elif p.action == "update":
             row = await db.get(HealthRecord, p.existing_id)
             if row is not None:
                 _snapshot(db, row)
                 _apply_update(row, p)
                 updated += 1
+            else:
+                logger.warning("update: existing row %s vanished", p.existing_id)
 
     return {
         "inserted": inserted,
