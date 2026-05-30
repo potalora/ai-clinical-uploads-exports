@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from uuid import UUID, uuid4
 
 from app.services.extraction.entity_extractor import ExtractedEntity
