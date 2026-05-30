@@ -56,12 +56,12 @@ class Settings(BaseSettings):
 
     # Extraction pipeline
     extraction_concurrency: int = 5
-    # Concurrent entity-extraction chunks per upload. KNOWN-GOOD = 3. Raising this
-    # to 10 was measured to trigger Gemini rate-limit failures that silently drop
-    # ALL extracted records (gather(return_exceptions=True) swallows the 429s).
-    # The entity-extraction wall is Gemini rate limits, not this setting — speeding
-    # it up safely needs rate-limit-aware backoff or a batch API, not a higher cap.
-    section_extraction_concurrency: int = 3
+    # Concurrent entity-extraction chunks per upload. Capped by gemini_concurrency_limit.
+    # Earlier the value 10 appeared to "drop all records" — root-caused (Phase 2d) to
+    # event-loop-bound module semaphores raising under contention, NOT rate limits (paid tier,
+    # ~1000 RPM; isolated conc=10 verified clean). Fixed via per-loop semaphore caches, so 10
+    # is safe and ~3x faster than 3 (fewer serial waves over the ~22s/call latency floor).
+    section_extraction_concurrency: int = 10
     extraction_timeout_minutes: int = 10
     extraction_max_retries: int = 3
     small_doc_threshold: int = 3000
