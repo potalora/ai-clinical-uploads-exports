@@ -4,6 +4,7 @@ import logging
 from enum import Enum
 from pathlib import Path
 
+import pdfplumber
 from google import genai
 from google.genai import types
 from PIL import Image
@@ -28,6 +29,8 @@ SUPPORTED_EXTENSIONS = {
     ".tiff": FileType.TIFF,
 }
 
+LOCAL_TEXT_MIN_CHARS_PER_PAGE = 50
+
 
 def _render_tables(tables: list | None) -> str:
     """Render pdfplumber extract_tables() output as pipe-delimited rows."""
@@ -38,6 +41,29 @@ def _render_tables(tables: list | None) -> str:
         for row in table:
             lines.append(" | ".join((cell or "") for cell in row))
     return "\n".join(lines)
+
+
+def extract_text_from_pdf_local(file_path: Path) -> tuple[str, float]:
+    """Extract text + tables from a PDF's embedded text layer via pdfplumber.
+
+    Returns (text, confidence) where confidence is average characters per page.
+    A scanned/image-only PDF yields ~0 confidence because it has no text layer.
+    """
+    page_texts: list[str] = []
+    total_chars = 0
+    with pdfplumber.open(file_path) as pdf:
+        page_count = len(pdf.pages) or 1
+        for page in pdf.pages:
+            parts = [page.extract_text() or ""]
+            table_text = _render_tables(page.extract_tables())
+            if table_text:
+                parts.append(table_text)
+            page_text = "\n".join(p for p in parts if p)
+            total_chars += len(page_text)
+            page_texts.append(page_text)
+    text = "\n\n".join(page_texts)
+    confidence = total_chars / page_count
+    return text, confidence
 
 
 def detect_file_type(file_path: Path) -> FileType:
