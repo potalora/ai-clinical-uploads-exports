@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Regression tests pinning the short-doc section-parse skip optimization.
 
 `_process_unstructured` (app/api/upload.py) skips the `parse_sections` Gemini
@@ -8,6 +6,7 @@ single-section ParsedDocument locally instead.  These tests ensure that the
 threshold value stays sane and that text lengths sit on the correct side of
 the boundary so a future change can't silently undo the optimization.
 """
+from __future__ import annotations
 
 from app.config import settings
 
