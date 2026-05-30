@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     jwt_refresh_token_expire_days: int = 7
 
     # AI Prompt Builder
-    prompt_target_model: str = "gemini-3-flash-preview"
+    prompt_target_model: str = "gemini-3.5-flash"
     prompt_suggested_temperature: float = 0.3
     prompt_suggested_max_tokens: int = 4096
     prompt_suggested_thinking_level: str = "low"
