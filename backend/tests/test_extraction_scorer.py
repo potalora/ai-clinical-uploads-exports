@@ -106,3 +106,40 @@ def test_expected_family_history_present():
     gt = {"expected": [], "expected_family_history": [{"text": "colon cancer"}]}
     assert score(gt, [_ext("family_history", "colon cancer")]).attribution_accuracy == 1.0
     assert score(gt, []).attribution_accuracy == 0.0
+
+
+# ---------------------------------------------------------------------------
+# New tests — must FAIL before scorer fixes are applied (Fix A + Fix B)
+# ---------------------------------------------------------------------------
+
+
+def test_spoken_bp_normalizes_to_slash():
+    # Fix A: spoken blood pressure "142 over 90" must normalize equal to "142/90"
+    assert normalize("142 over 90") == normalize("142/90")
+
+
+def test_pcn_synonym():
+    # Fix A: pharmacy abbreviation PCN must map to penicillin
+    assert normalize("PCN") == "penicillin"
+
+
+def test_breast_ca_synonym_credits_family_history():
+    # Fix A: "mom breast ca" contains "breast ca" which should expand to "breast cancer"
+    # so the family_history entity matches expected_family_history text "breast cancer".
+    gt = {"expected": [], "expected_family_history": [{"text": "breast cancer"}]}
+    rep = score(gt, [_ext("family_history", "mom breast ca")])
+    assert rep.attribution_accuracy == 1.0
+
+
+def test_non_storable_entities_do_not_hurt_precision():
+    # Fix B: dosage, frequency, provider are non-storable sub-entities and must NOT
+    # be counted as false positives when computing overall precision.
+    gt = {"expected": [{"entity_class": "medication", "text": "lisinopril"}]}
+    extracted = [
+        _ext("medication", "lisinopril"),
+        _ext("dosage", "10mg"),        # sub-entity — must NOT count as false positive
+        _ext("frequency", "bid"),      # sub-entity
+        _ext("provider", "Dr. Lee"),   # non-storable
+    ]
+    rep = score(gt, extracted)
+    assert rep.overall.precision == 1.0

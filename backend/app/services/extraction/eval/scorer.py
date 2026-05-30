@@ -19,13 +19,38 @@ _SYNONYMS = {
     "sob": "shortness of breath",
     "cp": "chest pain",
     "gerd": "gastroesophageal reflux disease",
+    # Fix A — pharmacy abbreviation
+    "pcn": "penicillin",
+    # Fix A — oncology abbreviations (whole-word substitution handles substrings too)
+    "breast ca": "breast cancer",
+    "colon ca": "colon cancer",
+    "ca": "cancer",
 }
+
+# Fix B — entity classes that map to None in ENTITY_TO_RECORD_TYPE (provider, dosage,
+# route, frequency, duration, date).  These are attribute-only / non-storable sub-entities
+# produced by the extractor that should never count as false positives against a ground-truth
+# set which only contains storable record-level entities.
+# Mirrors the None-mapped classes in app.services.extraction.entity_to_fhir.ENTITY_TO_RECORD_TYPE.
+_NON_SCORED_CLASSES: frozenset[str] = frozenset(
+    {"provider", "dosage", "route", "frequency", "duration", "date"}
+)
+
+# Regex used for spoken blood pressure normalization (Fix A).
+_SPOKEN_BP_RE = re.compile(r"(\d+)\s+over\s+(\d+)")
 
 
 def normalize(text: str) -> str:
-    t = re.sub(r"[^\w\s]", " ", (text or "").lower())
+    t = (text or "").lower()
+    # Fix A — convert spoken BP "142 over 90" → "142/90" before punctuation stripping
+    t = _SPOKEN_BP_RE.sub(r"\1/\2", t)
+    t = re.sub(r"[^\w\s/]", " ", t)  # keep "/" so "142/90" survives
     t = re.sub(r"\s+", " ", t).strip()
-    return _SYNONYMS.get(t, t)
+    # Fix A — apply synonyms as whole-word substring replacements so both whole-string
+    # ("pcn" → "penicillin") and substring ("mom breast ca" → "mom breast cancer") work.
+    for src, dst in _SYNONYMS.items():
+        t = re.sub(r"\b" + re.escape(src) + r"\b", dst, t)
+    return t
 
 
 def _texts_match(a: str, b: str) -> bool:
@@ -71,21 +96,28 @@ def score(ground_truth: dict[str, Any], extracted: list[ExtractedEntity]) -> Eva
     must_not: list[dict] = ground_truth.get("must_not_extract", [])
     expected_fh: list[dict] = ground_truth.get("expected_family_history", [])
 
-    matched_expected = [e for e in expected if _matches(e, extracted)]
+    # Fix B — exclude non-storable sub-entities from precision / FP accounting.
+    scored_extracted = [e for e in extracted if e.entity_class not in _NON_SCORED_CLASSES]
+
+    matched_expected = [e for e in expected if _matches(e, scored_extracted)]
     missed = [e for e in expected if e not in matched_expected]
     tp = len(matched_expected)
     fn = len(missed)
     fp = sum(
-        1 for e in extracted
-        if not any(e.entity_class == x["entity_class"] and _texts_match(e.text, x["text"]) for x in expected)
+        1 for e in scored_extracted
+        if not any(
+            e.entity_class == x["entity_class"] and _texts_match(e.text, x["text"])
+            for x in expected
+        )
     )
     overall = _prf(tp, fp, fn)
 
     per_type: dict[str, PRF] = {}
     for cls in {x["entity_class"] for x in expected}:
         exp_c = [x for x in expected if x["entity_class"] == cls]
-        ext_c = [e for e in extracted if e.entity_class == cls]
-        t = sum(1 for x in exp_c if _matches(x, extracted))
+        # Fix B — also exclude non-storable classes from per-type FP count
+        ext_c = [e for e in scored_extracted if e.entity_class == cls]
+        t = sum(1 for x in exp_c if _matches(x, scored_extracted))
         f = sum(1 for e in ext_c if not any(_texts_match(e.text, x["text"]) for x in exp_c))
         per_type[cls] = _prf(t, f, len(exp_c) - t)
 

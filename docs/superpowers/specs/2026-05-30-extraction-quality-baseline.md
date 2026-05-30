@@ -126,37 +126,53 @@ Both tests PASSED the `recall >= 0.5` floor. No hallucinations (false_extraction
 
 ---
 
-## Top gaps for Phase 2b-2
+## After scorer refinement (2026-05-30)
 
-These are the concrete, observed failures ranked by priority.
+**Branch:** `feat/extraction-quality-eval` — commit: scorer fixes (spoken-BP + synonyms + ignore non-storable)
 
-### Gap 1 — Scorer synonym gaps (highest priority, easy fix)
+Three scorer fixes applied (`app/services/extraction/eval/scorer.py`):
+- **Fix A — spoken BP normalization:** `"142 over 90"` → `"142/90"` via regex in `normalize()` before punctuation stripping.
+- **Fix A — word-boundary synonym substitution:** `_SYNONYMS` expanded with `pcn→penicillin`, `breast ca→breast cancer`, `colon ca→colon cancer`, `ca→cancer`. Replacement now uses `re.sub(r"\b...\b")` so both whole-string and substring forms expand (e.g. `"mom breast ca"` → `"mom breast cancer"`).
+- **Fix B — `_NON_SCORED_CLASSES`:** Non-storable sub-entities (`provider, dosage, route, frequency, duration, date`) excluded from FP / precision accounting, since they are attribute-level outputs that the ground-truth expected set never contains.
 
-The extractor is producing clinically correct output; the scorer is failing to credit it because of missing normalization rules. Three instances observed:
+### New eval numbers (live Gemini run)
 
-- `"142 over 90"` vs `"142/90"` — spoken vs numeric blood pressure notation. Fix: add regex normalization for `(\d+) over (\d+)` → `\1/\2` in `scorer.normalize()`.
-- `"breast ca"` vs `"breast cancer"` — oncology abbreviation. Fix: add `"breast ca": "breast cancer"` to `_SYNONYMS`.
-- `"pcn"` vs `"penicillin"` — pharmacy abbreviation. Fix: add `"pcn": "penicillin"` to `_SYNONYMS`.
+| Fixture | P (before → after) | R (before → after) | F1 (before → after) | Negation | Attribution | Missed |
+|---|---|---|---|---|---|---|
+| transcript_visit | 0.17 → **0.40** | 0.50 → **1.00** | 0.25 → **0.57** | 1.00 | 1.00 | none |
+| phone_note | 0.44 → **0.83** | 0.80 → **1.00** | 0.57 → **0.91** | 1.00 | 0.50 → **1.00** | none |
 
-All three fixes would raise both fixtures' scores substantially without changing extractor behaviour.
+All expected entities now matched. Both fixtures: recall = 1.00, attribution = 1.00, negation = 1.00, false_extractions = [].
 
-### Gap 2 — Unlabelled true positives inflate FP (medium priority)
+Remaining FP in `transcript_visit` (P=0.40): 3 unlabelled-but-clinically-correct extractions — `medication:lisinopril`, `family_history:father had colon cancer`, `encounter:What brings you in today?`. These are not scorer errors; the expected set is intentionally sparse for negation/attribution testing.
 
-The expected sets in both fixtures are intentionally sparse (testing specific phenomena), causing the scorer to count clinically reasonable extractions as false positives. Specific unlabelled true positives observed:
+---
 
-- `transcript_visit`: `medication:lisinopril`, `family_history:father had colon cancer`, `provider:Dr. Lee`, `encounter:What brings you in today?`
-- `phone_note`: `dosage:10mg`, `dosage:500`, `frequency:bid`
+## Top gaps for Phase 2b-2 (revised after scorer refinement)
 
-Recommendation: either expand the expected sets to cover these entities, or restructure the ground-truth format to include an `acceptable` list that is counted as TP but not required for recall.
+Scorer noise has been removed. The remaining gap is entirely a ground-truth coverage issue, not an extractor failure.
 
-### Gap 3 — Attribution for abbreviated family history (medium priority)
+### Gap 1 — RESOLVED: Scorer synonym gaps
 
-`"mom breast ca"` was extracted as `family_history:mom breast ca` (correct entity class), but the scorer did not credit the match because `"breast ca"` does not substring-match `"breast cancer"`. After synonym fix (Gap 1), attribution_accuracy for phone_note will improve to 1.00.
+All three normalization gaps fixed (spoken BP, `pcn→penicillin`, `breast ca→breast cancer`). 16/16 scorer unit tests green.
+
+### Gap 2 — Sparse expected sets still deflate precision (low priority, no extractor action needed)
+
+The expected sets in both fixtures are intentionally minimal (testing specific phenomena), so clinically correct extractions that are not labelled still count as FP:
+
+- `transcript_visit`: `medication:lisinopril`, `family_history:father had colon cancer`, `encounter:What brings you in today?` — all correct, not in expected set.
+- `phone_note`: no remaining unlabelled FP after non-storable filter (dosage/frequency now excluded from scoring).
+
+Recommendation (future): add an `acceptable` list to ground-truth fixtures for entities that are correct but not required for recall, so they are counted as TP rather than FP.
+
+### Gap 3 — RESOLVED: Attribution for abbreviated family history
+
+`"mom breast ca"` now normalizes to `"mom breast cancer"` via word-boundary synonym expansion, correctly matching `family_history:breast cancer`. Attribution accuracy for phone_note = 1.00.
 
 ### Gap 4 — Negation working perfectly (no action needed)
 
-Both fixtures scored negation_accuracy = 1.00. The extractor correctly suppressed `condition:diabetes` ("never had diabetes"), `condition:chest pain` ("no chest pain"), and did not extract `condition:colon cancer` or `condition:breast cancer` as patient conditions. This guard is robust and does not need improvement.
+Both fixtures scored negation_accuracy = 1.00 in both runs. Guard is robust.
 
 ### Gap 5 — No hallucinations observed (no action needed)
 
-`false_extractions = []` for both fixtures. The model did not extract `condition:esophagitis` (educational context) or misattribute family history as patient conditions. The hallucination guard is working.
+`false_extractions = []` for both fixtures in both runs. Hallucination guard is working.
