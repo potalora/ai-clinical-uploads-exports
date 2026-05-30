@@ -16,8 +16,10 @@ PDF took **~7 minutes** through the live pipeline (Phase 2a fidelity run). Root 
   layer extractable locally in milliseconds.
 - `entity_extractor.extract_entities` calls `lx.extract(..., max_workers=1)` (`:24`) — chunks
   (`max_char_buffer=2000`) are processed **sequentially**, one Gemini call at a time.
-- `_process_unstructured` always calls `parse_sections` (a Gemini round-trip) even for short
-  documents.
+- `_process_unstructured` calls `parse_sections` (a Gemini round-trip). NOTE: a short-doc skip
+  guard ALREADY EXISTS at `upload.py:611` (`if len(scrubbed_text) < settings.small_doc_threshold`,
+  default 3000) — so optimization #3 is already implemented; Phase 2c only adds a regression
+  test pinning it.
 
 Pipeline order: **text-extract → PHI scrub → section-parse → per-section entity-extract.**
 
@@ -58,12 +60,13 @@ the text (`max_char_buffer=2000`) and processes chunks concurrently with a threa
 bounded by the existing concurrency limit so Gemini rate limits are respected. ~N× faster on
 multi-chunk documents.
 
-## Optimization #3 — Skip section-parse for short docs
+## Optimization #3 — Skip section-parse for short docs (ALREADY IMPLEMENTED)
 
-In `_process_unstructured`, when the scrubbed text length is below
-`SECTION_PARSE_MIN_CHARS` (**default 1,500**), skip the `parse_sections` Gemini call and use
-its existing single-section fallback (`ParsedDocument` with one `OTHER` section). Removes one
-round-trip for short notes; long documents are unaffected.
+This already exists: `_process_unstructured` (`upload.py:611`) skips the `parse_sections`
+Gemini call and uses the single-section fallback when
+`len(scrubbed_text) < settings.small_doc_threshold` (config default **3000**). Phase 2c does
+NOT re-implement it — it adds a **regression test** pinning the behavior (short text → no
+`parse_sections` call; long text → call made), so a future change can't silently undo it.
 
 ## Components & Boundaries
 
@@ -76,9 +79,8 @@ round-trip for short notes; long documents are unaffected.
     fallback).
   - Module constant `LOCAL_TEXT_MIN_CHARS_PER_PAGE = 50`.
 - `app/services/extraction/entity_extractor.py`: one-line `max_workers` change (config-driven).
-- `app/api/upload.py`: short-doc guard around the `parse_sections` call; module/constant
-  `SECTION_PARSE_MIN_CHARS = 1500` (or read from config if a setting is added — constant is
-  fine).
+- `app/api/upload.py`: short-doc guard already present (`settings.small_doc_threshold`); no
+  code change — regression test only.
 
 The confidence/routing logic is isolated in `text_extractor.py` and unit-testable without any
 Gemini call.
