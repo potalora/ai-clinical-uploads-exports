@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from google import genai
+from pydantic import BaseModel
 
 from app.config import settings
 
@@ -48,35 +49,33 @@ class ParsedDocument:
 
 
 _SECTION_PARSER_PROMPT = """\
-You are a clinical document parser. Given the full text of a medical document, \
-identify its logical sections and return structured JSON.
+You are a clinical document parser. Given the full text of a medical document, identify its
+logical sections in the order they appear and return structured JSON.
 
-Return ONLY valid JSON with this exact schema:
-{
-  "document_type": "clinical_note" | "lab_report" | "imaging_report" | "discharge_summary" | "referral" | "other",
-  "primary_visit_date": "YYYY-MM-DD" or null,
-  "provider": "provider name" or null,
-  "facility": "facility name" or null,
-  "sections": [
-    {
-      "type": "medications" | "assessment" | "clinical_note" | "labs" | "review_of_systems" | "history" | "physical_exam" | "assessment_plan" | "imaging" | "family_history" | "social_history" | "allergies" | "procedures" | "vitals" | "other",
-      "title": "Section heading as it appears in the document",
-      "text": "Full text content of this section, preserving original formatting",
-      "char_range": [start_char, end_char]
-    }
-  ]
-}
+For EACH section return:
+- "type": one of medications, assessment, clinical_note, labs, review_of_systems, history,
+  physical_exam, assessment_plan, imaging, family_history, social_history, allergies,
+  procedures, vitals, other
+- "anchor": the section's heading or first line, copied VERBATIM from the document (the exact
+  characters as they appear, ~10-60 chars). Do NOT paraphrase. Do NOT return the section body.
 
-Rules:
-- Preserve ALL text — every character of the original document must appear in exactly one section.
-- Use the most specific section type that fits. Use "other" only for content that doesn't match any type.
-- If the document has no clear section structure, return a single section with type "clinical_note".
-- The "history" type covers past medical history, surgical history, and previous visit notes.
-- "assessment_plan" is specifically for the Assessment & Plan or A&P section.
-- "assessment" is for standalone diagnosis/assessment lists (e.g., ICD-10 code tables) NOT combined with a plan.
-- Date should be the primary visit/encounter date, not document generation dates or historical dates.
-- Provider and facility are extracted from document headers, not from narrative text.
+Also return top-level "document_type", "primary_visit_date", "provider", "facility" when
+identifiable (else null). Return sections in document order. Do NOT echo the document text;
+return only types and verbatim anchors.
 """
+
+
+class _SectionAnchor(BaseModel):
+    type: str
+    anchor: str
+
+
+class _SectionParseSchema(BaseModel):
+    document_type: str = "unknown"
+    primary_visit_date: str | None = None
+    provider: str | None = None
+    facility: str | None = None
+    sections: list[_SectionAnchor]
 
 
 def resolve_sections(text: str, raw_sections: list[dict]) -> list[ParsedSection]:
@@ -159,10 +158,7 @@ async def parse_sections(text: str, api_key: str) -> ParsedDocument:
     # If the response is a list, treat it as the sections array directly.
     if isinstance(llm_response, list):
         raw_sections = llm_response
-        doc_type = "unknown"
-        visit_date = None
-        provider = None
-        facility = None
+        doc_type, visit_date, provider, facility = "unknown", None, None, None
     else:
         raw_sections = llm_response.get("sections", [])
         doc_type = llm_response.get("document_type", "unknown")
@@ -170,27 +166,7 @@ async def parse_sections(text: str, api_key: str) -> ParsedDocument:
         provider = llm_response.get("provider")
         facility = llm_response.get("facility")
 
-    sections = []
-    for s in raw_sections:
-        if not isinstance(s, dict):
-            continue
-        try:
-            section_type = SectionType(s["type"])
-        except (ValueError, KeyError):
-            section_type = SectionType.OTHER
-
-        char_range = s.get("char_range")
-        sections.append(
-            ParsedSection(
-                section_type=section_type,
-                title=s.get("title", ""),
-                text=s.get("text", ""),
-                char_range=tuple(char_range) if char_range and len(char_range) == 2 else None,
-            )
-        )
-
-    if not sections:
-        sections = [ParsedSection(SectionType.OTHER, "Full Document", text)]
+    sections = resolve_sections(text, raw_sections)
 
     return ParsedDocument(
         document_type=doc_type,
@@ -202,7 +178,7 @@ async def parse_sections(text: str, api_key: str) -> ParsedDocument:
 
 
 async def _call_gemini_for_sections(text: str, api_key: str) -> dict:
-    """Call Gemini Flash to parse document sections. Returns parsed JSON dict."""
+    """Call Gemini Flash to parse document sections (type + verbatim anchor only)."""
     client = genai.Client(api_key=api_key)
     response = await client.aio.models.generate_content(
         model=settings.gemini_model,
@@ -210,6 +186,7 @@ async def _call_gemini_for_sections(text: str, api_key: str) -> dict:
         config=genai.types.GenerateContentConfig(
             temperature=0.1,
             response_mime_type="application/json",
+            response_schema=_SectionParseSchema,
         ),
     )
     return json.loads(response.text)
