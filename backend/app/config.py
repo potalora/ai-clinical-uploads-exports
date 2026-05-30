@@ -48,8 +48,8 @@ class Settings(BaseSettings):
 
     # Gemini API
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-3-flash-preview"
-    gemini_extraction_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-3.5-flash"
+    gemini_extraction_model: str = "gemini-3.5-flash"
     gemini_summary_temperature: float = 0.3
     gemini_summary_max_tokens: int = 8192
     gemini_concurrency_limit: int = 10
