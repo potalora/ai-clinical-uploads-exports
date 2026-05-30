@@ -719,6 +719,11 @@ async def _process_unstructured(upload_id: UUID, file_path: Path, user_id: UUID)
             patient = patient_result.scalar_one_or_none()
 
             if patient:
+                from app.services.ingestion.reextraction import soft_delete_prior_extracted
+                replaced = await soft_delete_prior_extracted(db, upload_id)
+                if replaced:
+                    logger.info("Re-extraction replaced %d prior records for %s", replaced, upload_id)
+
                 encounter_id = None
                 created_records = []
 
@@ -1021,6 +1026,11 @@ async def confirm_extraction(
 
     patient_uuid = UUID(body.patient_id)
     created_count = 0
+
+    from app.services.ingestion.reextraction import soft_delete_prior_extracted
+    replaced = await soft_delete_prior_extracted(db, upload_id)
+    if replaced:
+        logger.info("Manual re-confirm replaced %d prior records for %s", replaced, upload_id)
 
     for entity_data in body.confirmed_entities:
         entity = ExtractedEntity(
