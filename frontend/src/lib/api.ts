@@ -1,19 +1,79 @@
+import { useAuthStore } from "@/stores/useAuthStore";
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
 
 const IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
-function getToken(): string | null {
+function readAuthState(): { accessToken?: string; refreshToken?: string } | null {
   if (typeof window === "undefined") return null;
   try {
     const stored = localStorage.getItem("medtimeline-auth");
     if (stored) {
-      const parsed = JSON.parse(stored);
-      return parsed?.state?.accessToken || null;
+      return JSON.parse(stored)?.state ?? null;
     }
   } catch {
     // ignore
   }
   return null;
+}
+
+function getToken(): string | null {
+  return readAuthState()?.accessToken ?? null;
+}
+
+function getRefreshToken(): string | null {
+  return readAuthState()?.refreshToken ?? null;
+}
+
+// --- Transparent access-token refresh ---
+// The access token is short-lived (15 min). On a 401 we exchange the stored
+// refresh token for a new pair and retry the original request once. A single
+// in-flight refresh is shared across concurrent 401s because refresh tokens
+// rotate (the backend revokes the old one on use), so racing refreshes fail.
+let refreshPromise: Promise<string | null> | null = null;
+
+async function refreshAccessToken(): Promise<string | null> {
+  if (refreshPromise) return refreshPromise;
+
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return null;
+
+  refreshPromise = (async () => {
+    try {
+      const res = await fetch(`${API_BASE}/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (!data?.access_token || !data?.refresh_token) return null;
+      // Keep the zustand store (and its localStorage mirror) in sync so that
+      // components reading accessToken (e.g. logout) use the rotated token.
+      useAuthStore.getState().setTokens(data.access_token, data.refresh_token);
+      return data.access_token as string;
+    } catch {
+      return null;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
+}
+
+function endSessionAndRedirect(): void {
+  try {
+    useAuthStore.getState().clearTokens();
+  } catch {
+    // ignore
+  }
+  if (
+    typeof window !== "undefined" &&
+    !window.location.pathname.startsWith("/login")
+  ) {
+    window.location.href = "/login";
+  }
 }
 
 // --- Idle timeout for HIPAA compliance (30-min session timeout) ---
@@ -43,9 +103,9 @@ class ApiClient {
 
   private async request<T>(
     endpoint: string,
-    options: RequestInit & { token?: string } = {}
+    options: RequestInit & { token?: string; _retry?: boolean } = {}
   ): Promise<T> {
-    const { token, ...fetchOptions } = options;
+    const { token, _retry, ...fetchOptions } = options;
     const authToken = token || getToken();
     const headers: Record<string, string> = {
       ...(options.headers as Record<string, string>),
@@ -64,6 +124,25 @@ class ApiClient {
       ...fetchOptions,
       headers,
     });
+
+    // Transparently refresh an expired access token once, then retry. Auth
+    // endpoints are excluded (their 401s are real credential/refresh failures).
+    if (
+      response.status === 401 &&
+      !_retry &&
+      !endpoint.startsWith("/auth/")
+    ) {
+      const newToken = await refreshAccessToken();
+      if (newToken) {
+        return this.request<T>(endpoint, {
+          ...options,
+          token: newToken,
+          _retry: true,
+        });
+      }
+      // No usable refresh token / refresh failed → the session is over.
+      endSessionAndRedirect();
+    }
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ detail: "Request failed" }));
