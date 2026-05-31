@@ -1629,9 +1629,10 @@ function SystemTab() {
               className="text-xs leading-relaxed"
               style={{ color: "var(--theme-text-dim)" }}
             >
-              All health data is stored locally and encrypted at rest. No data is
-              transmitted to external services. AI summary prompts are constructed
-              locally with de-identified data and are never sent automatically.
+              All health data is stored locally and encrypted at rest. Data only
+              leaves your device when you explicitly request an AI summary or
+              document extraction, and only after de-identification (PHI scrubbing
+              + name redaction) — never automatically, and never as raw PHI.
             </p>
           </div>
         </RetroCardContent>

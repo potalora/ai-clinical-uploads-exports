@@ -484,6 +484,9 @@ async def extraction_progress(
         )
         .where(UploadedFile.user_id == user_id)
         .where(UploadedFile.file_category == "unstructured")
+        # Duplicate files are skipped (no extraction work), so they must not
+        # inflate the progress denominator ("1 of 2 processed" when 1 is a dup).
+        .where(UploadedFile.ingestion_status != "duplicate_file")
     )
     row = result.one()
 

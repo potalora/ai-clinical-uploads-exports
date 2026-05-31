@@ -726,6 +726,42 @@ async def test_extraction_progress_returns_counts(
 
 
 @pytest.mark.asyncio
+async def test_extraction_progress_excludes_duplicate_files(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """Duplicate-file uploads are skipped (no extraction), so they must not
+    inflate the progress denominator ('1 of 2 processed' when 1 is a dup)."""
+    headers, user_id = await auth_headers(client)
+
+    from app.models.uploaded_file import UploadedFile
+    from uuid import uuid4
+
+    for i, status in enumerate(["completed", "duplicate_file"]):
+        db_session.add(
+            UploadedFile(
+                id=uuid4(),
+                user_id=user_id,
+                filename=f"dup_{i}.rtf",
+                mime_type="application/rtf",
+                file_size_bytes=500,
+                file_hash=f"hash_dup_{i}_{status}",
+                storage_path=f"/tmp/dup_{i}.rtf",
+                ingestion_status=status,
+                file_category="unstructured",
+                record_count=3 if status == "completed" else 0,
+            )
+        )
+    await db_session.commit()
+
+    data = (
+        await client.get("/api/v1/upload/extraction-progress", headers=headers)
+    ).json()
+    # The duplicate is excluded entirely: 1 file, completed, not 2.
+    assert data["total"] == 1
+    assert data["completed"] == 1
+
+
+@pytest.mark.asyncio
 async def test_trigger_extraction_rejects_other_users_files(
     client: AsyncClient, db_session: AsyncSession
 ):
