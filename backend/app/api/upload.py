@@ -15,28 +15,57 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import async_session_factory
 
-# Global semaphore to limit concurrent Gemini API calls across all uploads
-_gemini_semaphore: asyncio.Semaphore | None = None
+# Per-event-loop semaphore caches.
+#
+# An ``asyncio.Semaphore`` binds to the event loop that it first *blocks* on (it
+# registers waiter futures against the running loop). A single module-level
+# semaphore reused across loops therefore raises
+# ``RuntimeError: <Semaphore> is bound to a different event loop`` whenever a
+# task must wait on it under a different loop. In production this stays benign
+# because uvicorn runs one long-lived loop, but the test harness creates a fresh
+# loop per test (pytest-asyncio) and the persisting module global goes stale.
+# Keying by the running loop guarantees every loop gets a semaphore bound to it,
+# while still capping concurrency at the configured limits.
+_gemini_semaphores: dict[asyncio.AbstractEventLoop, asyncio.Semaphore] = {}
 
 # Extraction semaphore to limit concurrent file extractions (layer above Gemini semaphore)
-_extraction_semaphore: asyncio.Semaphore | None = None
+_extraction_semaphores: dict[asyncio.AbstractEventLoop, asyncio.Semaphore] = {}
 
 # Worker task reference
 _worker_task: asyncio.Task | None = None
 
 
+def _prune_closed_loops(cache: dict[asyncio.AbstractEventLoop, asyncio.Semaphore]) -> None:
+    """Drop semaphores keyed to event loops that have since closed.
+
+    Keeps the per-loop caches bounded so repeated short-lived loops (e.g. one
+    per test) do not accumulate dead entries.
+    """
+    stale = [loop for loop in cache if loop.is_closed()]
+    for loop in stale:
+        del cache[loop]
+
+
 def _get_gemini_semaphore() -> asyncio.Semaphore:
-    global _gemini_semaphore
-    if _gemini_semaphore is None:
-        _gemini_semaphore = asyncio.Semaphore(settings.gemini_concurrency_limit)
-    return _gemini_semaphore
+    """Return the Gemini-concurrency semaphore bound to the running event loop."""
+    loop = asyncio.get_running_loop()
+    sem = _gemini_semaphores.get(loop)
+    if sem is None:
+        _prune_closed_loops(_gemini_semaphores)
+        sem = asyncio.Semaphore(settings.gemini_concurrency_limit)
+        _gemini_semaphores[loop] = sem
+    return sem
 
 
 def _get_extraction_semaphore() -> asyncio.Semaphore:
-    global _extraction_semaphore
-    if _extraction_semaphore is None:
-        _extraction_semaphore = asyncio.Semaphore(settings.extraction_concurrency)
-    return _extraction_semaphore
+    """Return the file-extraction semaphore bound to the running event loop."""
+    loop = asyncio.get_running_loop()
+    sem = _extraction_semaphores.get(loop)
+    if sem is None:
+        _prune_closed_loops(_extraction_semaphores)
+        sem = asyncio.Semaphore(settings.extraction_concurrency)
+        _extraction_semaphores[loop] = sem
+    return sem
 
 
 async def _extraction_worker() -> None:
@@ -242,6 +271,46 @@ def _safe_file_path(upload_dir: Path, user_id: UUID, original_filename: str) -> 
         raise HTTPException(status_code=400, detail="Invalid filename")
 
     return file_path
+
+
+def _collect_entities(results: list, total_chunks: int) -> tuple[list, int]:
+    """Collect entities from asyncio.gather() results; count failed chunks.
+
+    A chunk is considered failed when it raised an Exception OR when its
+    ExtractionResult carries a non-empty ``error`` field.  Successful entity
+    objects are tagged with ``_source_section`` before being returned.
+
+    Args:
+        results: Raw list returned by ``asyncio.gather(..., return_exceptions=True)``.
+            Each item is either ``(ExtractionResult, section_type)`` or an ``Exception``.
+        total_chunks: Total number of tasks that were submitted (used for logging).
+
+    Returns:
+        A 2-tuple ``(entities, failed_chunks)`` where ``entities`` is a flat list of
+        ``ExtractedEntity`` objects and ``failed_chunks`` is the count of chunks that
+        did not produce usable output.
+    """
+    from app.services.extraction.entity_extractor import ExtractionResult  # local to avoid circular import
+
+    entities: list = []
+    failed = 0
+    for r in results:
+        if isinstance(r, Exception):
+            failed += 1
+            logger.error("Section extraction raised: %s", r)
+            continue
+        extraction_result: ExtractionResult
+        extraction_result, section_type = r
+        if extraction_result.error:
+            failed += 1
+            logger.warning(
+                "Extraction error in section %s: %s", section_type, extraction_result.error
+            )
+            continue
+        for entity in extraction_result.entities:
+            entity.attributes["_source_section"] = section_type
+            entities.append(entity)
+    return entities, failed
 
 
 # --- Endpoints ---
@@ -674,17 +743,23 @@ async def _process_unstructured(upload_id: UUID, file_path: Path, user_id: UUID)
             tasks = [extract_chunk(chunk, stype) for chunk, stype in extraction_tasks]
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            for r in results:
-                if isinstance(r, Exception):
-                    logger.error("Section extraction failed: %s", r)
-                    continue
-                extraction_result, section_type = r
-                if extraction_result.error:
-                    logger.warning("Extraction error in section %s: %s", section_type, extraction_result.error)
-                    continue
-                for entity in extraction_result.entities:
-                    entity.attributes["_source_section"] = section_type
-                    all_entities.append(entity)
+            collected, failed_chunks = _collect_entities(results, len(extraction_tasks))
+            all_entities.extend(collected)
+            if failed_chunks:
+                errs = list(upload.ingestion_errors or [])
+                errs.append({
+                    "stage": "entity_extraction",
+                    "failed_chunks": failed_chunks,
+                    "total_chunks": len(extraction_tasks),
+                    "error_type": "ExtractionChunkFailure",
+                })
+                upload.ingestion_errors = errs
+                logger.warning(
+                    "Extraction for %s: %d/%d chunks failed",
+                    upload.id,
+                    failed_chunks,
+                    len(extraction_tasks),
+                )
 
             # Deduplicate entities within the same document (same text + same type)
             seen = set()

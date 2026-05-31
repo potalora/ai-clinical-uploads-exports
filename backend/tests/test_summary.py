@@ -39,7 +39,7 @@ async def test_build_prompt_success(client: AsyncClient, db_session: AsyncSessio
 
     assert data["summary_type"] == "full"
     assert data["record_count"] == 5
-    assert data["target_model"] == "gemini-3-flash-preview"
+    assert data["target_model"] == "gemini-3.5-flash"
     assert isinstance(data["suggested_config"], dict)
     assert "temperature" in data["suggested_config"]
 
@@ -89,7 +89,7 @@ async def test_build_prompt_no_diagnosis_disclaimer(client: AsyncClient, db_sess
 
 @pytest.mark.asyncio
 async def test_build_prompt_target_model(client: AsyncClient, db_session: AsyncSession):
-    """Target model is always gemini-3-flash-preview."""
+    """Target model is the configured prompt target (gemini-3.5-flash)."""
     headers, uid = await auth_headers(client)
     patient = await create_test_patient(db_session, uid)
     await seed_test_records(db_session, uid, patient.id, count=1)
@@ -99,7 +99,7 @@ async def test_build_prompt_target_model(client: AsyncClient, db_session: AsyncS
         headers=headers,
         json={"patient_id": str(patient.id)},
     )
-    assert resp.json()["target_model"] == "gemini-3-flash-preview"
+    assert resp.json()["target_model"] == "gemini-3.5-flash"
 
 
 @pytest.mark.asyncio
