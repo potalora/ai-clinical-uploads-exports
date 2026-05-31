@@ -29,6 +29,10 @@ dependencies = [
     "Pillow>=11.0.0",
     "pdfplumber>=0.11",
     "python-fhir-converter>=0.3.0",
+    # PHI scrubbing: spaCy PERSON NER redacts free-text names before any Gemini
+    # call. Requires the model: `python -m spacy download en_core_web_md`.
+    # Fails open (NER skipped) if the model is absent.
+    "spacy>=3.7,<4",
 ]
 
 [dependency-groups]
