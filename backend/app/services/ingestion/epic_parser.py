@@ -8,7 +8,6 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.ingestion.bulk_inserter import bulk_insert_records
 from app.services.ingestion.epic_mappers.base import EpicMapper
 from app.services.ingestion.epic_mappers.allergies import AllergyMapper
 from app.services.ingestion.epic_mappers.documents import DocInformationMapper
@@ -23,7 +22,9 @@ from app.services.ingestion.epic_mappers.referrals import ReferralMapper
 from app.services.ingestion.epic_mappers.results import OrderResultsMapper
 from app.services.ingestion.epic_mappers.social_hx import SocialHxMapper
 from app.services.ingestion.epic_mappers.vitals import VitalsMapper
-from app.services.ingestion.fhir_parser import build_display_text, map_fhir_resource
+from app.services.ingestion.fhir_parser import build_display_text
+from app.services.ingestion.idempotent_inserter import idempotent_insert_records
+from app.services.ingestion.identity import epic_identity
 
 logger = logging.getLogger(__name__)
 
@@ -144,12 +145,27 @@ async def parse_epic_export(
                             "display_text": build_display_text(fhir_resource, resource_type),
                         }
 
+                        ident = epic_identity(
+                            table_name,
+                            mapper.primary_key_columns,
+                            row,
+                        )
+                        if ident is not None:
+                            mapped["external_id"] = ident.external_id
+                            mapped["source_system"] = ident.source_system
+
                         batch.append(mapped)
 
                         if len(batch) >= batch_size:
-                            count = await bulk_insert_records(db, batch)
-                            rows_inserted += count
-                            stats["records_inserted"] += count
+                            result = await idempotent_insert_records(db, batch)
+                            rows_inserted += result["inserted"]
+                            stats["records_inserted"] += result["inserted"]
+                            stats["records_updated"] = (
+                                stats.get("records_updated", 0) + result["updated"]
+                            )
+                            stats["records_unchanged"] = (
+                                stats.get("records_unchanged", 0) + result["unchanged"]
+                            )
                             batch.clear()
                             await db.commit()
 
@@ -160,9 +176,13 @@ async def parse_epic_export(
                         continue
 
             if batch:
-                count = await bulk_insert_records(db, batch)
-                rows_inserted += count
-                stats["records_inserted"] += count
+                result = await idempotent_insert_records(db, batch)
+                rows_inserted += result["inserted"]
+                stats["records_inserted"] += result["inserted"]
+                stats["records_updated"] = stats.get("records_updated", 0) + result["updated"]
+                stats["records_unchanged"] = (
+                    stats.get("records_unchanged", 0) + result["unchanged"]
+                )
                 batch.clear()
                 await db.commit()
 

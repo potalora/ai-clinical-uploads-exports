@@ -1170,6 +1170,7 @@ async def resolve_review(
     from app.models.deduplication import DedupCandidate
     from app.models.provenance import Provenance
     from app.services.dedup.field_merger import apply_field_update
+    from app.services.ingestion.content_hash import content_hash
 
     result = await db.execute(
         select(UploadedFile).where(
@@ -1223,6 +1224,7 @@ async def resolve_review(
         elif action == "update":
             merge_result = apply_field_update(rec_a, rec_b, field_overrides)
             rec_a.fhir_resource = merge_result["updated_resource"]
+            rec_a.content_hash = content_hash(rec_a.fhir_resource)
             rec_a.display_text = merge_result["display_text"]
             rec_a.merge_metadata = merge_result["merge_metadata"]
             rec_b.is_duplicate = True

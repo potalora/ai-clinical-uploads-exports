@@ -45,4 +45,5 @@ testpaths = ["tests"]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests",
+    "fidelity: marks tests requiring real user-provided data",
 ]

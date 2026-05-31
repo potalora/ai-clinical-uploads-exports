@@ -6,6 +6,9 @@ from app.services.ingestion.epic_mappers.base import EpicMapper
 class ProblemListMapper(EpicMapper):
     """Map PROBLEM_LIST rows to FHIR Condition resources."""
 
+    source_table = "PROBLEM_LIST"
+    primary_key_columns = ["PROBLEM_LIST_ID"]
+
     def to_fhir(self, row: dict[str, str]) -> dict | None:
         dx_name = self.safe_get(row, "DX_ID_DX_NAME")
         description = self.safe_get(row, "DESCRIPTION") or dx_name
@@ -64,6 +67,9 @@ class ProblemListMapper(EpicMapper):
 
 class MedicalHxMapper(EpicMapper):
     """Map MEDICAL_HX rows to FHIR Condition resources."""
+
+    source_table = "MEDICAL_HX"
+    primary_key_columns = ["PAT_ENC_CSN_ID", "LINE"]
 
     def to_fhir(self, row: dict[str, str]) -> dict | None:
         dx_name = self.safe_get(row, "DX_ID_DX_NAME")

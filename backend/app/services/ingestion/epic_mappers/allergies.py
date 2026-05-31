@@ -6,6 +6,9 @@ from app.services.ingestion.epic_mappers.base import EpicMapper
 class AllergyMapper(EpicMapper):
     """Map ALLERGY rows to FHIR AllergyIntolerance resources."""
 
+    source_table = "ALLERGY"
+    primary_key_columns = ["ALLERGY_ID"]
+
     def to_fhir(self, row: dict[str, str]) -> dict | None:
         allergen = self.safe_get(row, "ALLERGEN_ID_ALLERGEN_NAME")
         if not allergen:

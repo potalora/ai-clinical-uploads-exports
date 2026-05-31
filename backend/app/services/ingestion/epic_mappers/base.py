@@ -8,6 +8,9 @@ from typing import Any
 class EpicMapper(ABC):
     """Abstract base class for Epic table → FHIR resource mappers."""
 
+    source_table: str = ""
+    primary_key_columns: list[str] = []
+
     @abstractmethod
     def to_fhir(self, row: dict[str, str]) -> dict | None:
         """Map a single TSV row to a FHIR-like resource dict.

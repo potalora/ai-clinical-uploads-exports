@@ -6,6 +6,9 @@ from app.services.ingestion.epic_mappers.base import EpicMapper
 class OrderResultsMapper(EpicMapper):
     """Map ORDER_RESULTS rows to FHIR Observation resources."""
 
+    source_table = "ORDER_RESULTS"
+    primary_key_columns = ["ORDER_PROC_ID", "LINE"]
+
     def to_fhir(self, row: dict[str, str]) -> dict | None:
         component_name = self.safe_get(row, "COMPONENT_ID_NAME")
         if not component_name:
