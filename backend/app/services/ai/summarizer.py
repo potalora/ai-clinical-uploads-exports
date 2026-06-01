@@ -157,6 +157,11 @@ Please provide a structured summary following the rules in the system prompt."""
         "system_instruction": system_prompt,
         "temperature": settings.gemini_summary_temperature,
         "max_output_tokens": settings.gemini_summary_max_tokens,
+        # Bound reasoning tokens so they don't consume the output budget and
+        # truncate the visible summary (gemini-3.x flash thinks by default).
+        "thinking_config": types.ThinkingConfig(
+            thinking_level=settings.gemini_summary_thinking_level
+        ),
     }
     if output_format in ("json", "both"):
         config_kwargs["response_mime_type"] = "application/json"

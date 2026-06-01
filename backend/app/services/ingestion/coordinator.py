@@ -21,6 +21,11 @@ from app.services.ingestion.cda_parser import parse_cda_document
 from app.services.ingestion.epic_parser import parse_epic_export
 from app.services.ingestion.fhir_parser import parse_fhir_bundle
 from app.services.ingestion.idempotent_inserter import idempotent_insert_records
+from app.services.ingestion.patient_demographics import (
+    backfill_patient_demographics,
+    extract_epic_demographics,
+    extract_fhir_demographics,
+)
 from app.services.ingestion.xdm_parser import parse_xdm_metadata
 
 logger = logging.getLogger(__name__)
@@ -32,18 +37,33 @@ async def get_or_create_patient(
     """Get existing patient for user or create a default one."""
     result = await db.execute(select(Patient).where(Patient.user_id == user_id))
     patient = result.scalar_one_or_none()
+    demo = extract_fhir_demographics(fhir_data) if fhir_data else {}
+
     if patient:
+        # Backfill any identifiers a prior (blank) creation missed — critical so
+        # the deterministic PHI scrubber can strip the patient's own name.
+        if demo:
+            await backfill_patient_demographics(
+                db, patient,
+                name=demo.get("name"), mrn=demo.get("mrn"),
+                dob=demo.get("dob"), gender=demo.get("gender"),
+            )
         return patient
 
     patient = Patient(
         id=uuid4(),
         user_id=user_id,
         fhir_id=fhir_data.get("id") if fhir_data else None,
-        gender=fhir_data.get("gender") if fhir_data else None,
     )
     db.add(patient)
     await db.commit()
     await db.refresh(patient)
+    if demo:
+        await backfill_patient_demographics(
+            db, patient,
+            name=demo.get("name"), mrn=demo.get("mrn"),
+            dob=demo.get("dob"), gender=demo.get("gender"),
+        )
     return patient
 
 
@@ -254,6 +274,24 @@ async def _ingest_fhir(
     )
 
 
+async def _backfill_patient_by_id(
+    db: AsyncSession, patient_id: UUID, demo: dict
+) -> None:
+    """Load a patient by id and backfill demographics (best-effort)."""
+    if not demo or not any(demo.values()):
+        return
+    patient = (
+        await db.execute(select(Patient).where(Patient.id == patient_id))
+    ).scalar_one_or_none()
+    if patient is None:
+        return
+    await backfill_patient_demographics(
+        db, patient,
+        name=demo.get("name"), mrn=demo.get("mrn"),
+        dob=demo.get("dob"), gender=demo.get("gender"),
+    )
+
+
 async def _ingest_epic_dir(
     db: AsyncSession,
     user_id: UUID,
@@ -262,6 +300,8 @@ async def _ingest_epic_dir(
     dir_path: Path,
 ) -> dict:
     """Ingest an Epic EHI Tables export directory."""
+    # Backfill patient identifiers from PATIENT.tsv before records are inserted.
+    await _backfill_patient_by_id(db, patient_id, extract_epic_demographics(dir_path))
     return await parse_epic_export(
         export_dir=dir_path,
         user_id=user_id,
@@ -341,6 +381,14 @@ async def _ingest_xdm(
     if not manifest:
         stats["errors"].append({"error": "Failed to parse METADATA.XML"})
         return stats
+
+    # Backfill patient identifiers from the XDM manifest (HL7 PID-5/PID-7) so the
+    # deterministic PHI scrubber can strip the patient's own name from CDA text.
+    await _backfill_patient_by_id(
+        db, patient_id,
+        {"name": manifest.patient_name, "dob": manifest.patient_dob,
+         "mrn": None, "gender": None},
+    )
 
     # Filter to XML documents only
     xml_docs = [d for d in manifest.documents if d.mime_type == "text/xml"]

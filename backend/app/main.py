@@ -38,6 +38,23 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Failed to recover stuck files on startup")
 
+    # Warm-load the spaCy PHI-NER model at boot (memory free, no GIL contention)
+    # so name redaction is a reliable cached singleton — not a first-load that
+    # can fail under concurrent extraction and silently disable de-identification.
+    if settings.phi_ner_enabled:
+        try:
+            from app.services.ai.phi_ner import warm_load_ner
+
+            if warm_load_ner():
+                logger.info("PHI-NER spaCy model warm-loaded (%s)", settings.phi_ner_spacy_model)
+            else:
+                logger.warning(
+                    "PHI-NER spaCy model %s NOT available at startup; name "
+                    "redaction will retry per-call", settings.phi_ner_spacy_model
+                )
+        except Exception:
+            logger.exception("PHI-NER warm-load raised at startup")
+
     # Start the extraction worker
     from app.api.upload import start_extraction_worker
     start_extraction_worker()

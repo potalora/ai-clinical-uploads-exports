@@ -51,7 +51,13 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-3.5-flash"
     gemini_extraction_model: str = "gemini-3.5-flash"
     gemini_summary_temperature: float = 0.3
-    gemini_summary_max_tokens: int = 8192
+    # max_output_tokens budget. On a thinking model this is shared with reasoning
+    # tokens, so it must be large enough that thinking can't starve the visible
+    # answer (the prior 8192 left summaries truncated mid-sentence).
+    gemini_summary_max_tokens: int = 16384
+    # Thinking level for the summary call ("low"/"high"). "low" keeps reasoning
+    # tokens small so the full summary fits in the output budget.
+    gemini_summary_thinking_level: str = "low"
     gemini_concurrency_limit: int = 10
 
     # Extraction pipeline

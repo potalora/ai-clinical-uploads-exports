@@ -61,30 +61,49 @@ _NAME = "[NAME]"
 # safely redacting cities/facilities would need a clinical-aware NER model.
 
 _nlp = None
-_load_failed = False
+_warned = False
 
 
 def _get_nlp():
-    """Lazily load the spaCy model once; cache the result (and any failure)."""
-    global _nlp, _load_failed
+    """Load the spaCy model lazily, caching the loaded model as a singleton.
+
+    A load *failure* is NOT latched permanently: earlier behavior set a
+    process-wide flag on the first exception, so a single transient failure
+    (e.g. memory pressure while a PDF was being OCR'd concurrently) silently
+    disabled name redaction for the entire life of the worker — a PHI hazard.
+    Now each call re-attempts the load until it succeeds; we only log the
+    warning once to avoid spam.
+    """
+    global _nlp, _warned
     if _nlp is not None:
         return _nlp
-    if _load_failed:
-        return None
     try:
         import spacy
 
         _nlp = spacy.load(settings.phi_ner_spacy_model)
+        _warned = False
+        return _nlp
     except Exception:  # noqa: BLE001 - missing model must not break scrubbing
-        _load_failed = True
-        logger.warning(
-            "spaCy model %r unavailable; skipping NER name redaction "
-            "(structured + known-identifier scrubbing still applied)",
-            settings.phi_ner_spacy_model,
-            exc_info=True,
-        )
+        if not _warned:
+            logger.warning(
+                "spaCy model %r unavailable; skipping NER name redaction this "
+                "call (will retry; structured + known-identifier scrubbing still "
+                "applied)",
+                settings.phi_ner_spacy_model,
+                exc_info=True,
+            )
+            _warned = True
         return None
-    return _nlp
+
+
+def warm_load_ner() -> bool:
+    """Eagerly load the spaCy model (call at app startup, before heavy work).
+
+    Loading once at boot — when memory is free and nothing competes for the GIL
+    — makes the steady-state NER path a cached singleton and avoids first-load
+    failures during concurrent extraction. Returns True if the model is ready.
+    """
+    return _get_nlp() is not None
 
 
 def _is_name_token(token) -> bool:
