@@ -337,6 +337,43 @@ def test_phi_scrubber_word_boundary_short_names():
     assert "lipid" in scrubbed2
 
 
+def test_phi_scrubber_generalizes_slash_dates():
+    """MM/DD/YYYY dates are generalized to MM/YYYY (day dropped), matching the
+    'Month DD, YYYY' handling — a lab report's DOB/collection dates must not leak.
+    (enable_ner=False isolates the regex layer.)"""
+    from app.services.ai.phi_scrubber import scrub_phi
+    text = "DOB: 07/31/1996  Collected: 02/16/2026  Reported: 2/3/2026"
+    scrubbed, report = scrub_phi(text, enable_ner=False)
+    assert "07/31/1996" not in scrubbed
+    assert "07/1996" in scrubbed
+    assert "02/2026" in scrubbed
+    assert "2/2026" in scrubbed
+    assert report.get("dates_generalized", 0) >= 3
+
+
+def test_phi_scrubber_redacts_account_and_accession_numbers():
+    """Account and lab-accession numbers (e.g. 'Account No: 235410324',
+    'Lab Accession: 87414853') are identifiers and must be redacted."""
+    from app.services.ai.phi_scrubber import scrub_phi
+    text = "Account No: 235410324\nLab Accession: 87414853\nAcct #998877"
+    scrubbed, _ = scrub_phi(text, enable_ner=False)
+    assert "235410324" not in scrubbed
+    assert "87414853" not in scrubbed
+    assert "998877" not in scrubbed
+    assert "[ACCOUNT]" in scrubbed
+
+
+def test_phi_scrubber_preserves_clinical_numbers():
+    """De-identification must not destroy lab values, ranges, or percentages."""
+    from app.services.ai.phi_scrubber import scrub_phi
+    text = "Anti-CdtB Ab 1.24; reference 0.00 - 1.55; 96% - 100% PPV; IBS-D"
+    scrubbed, _ = scrub_phi(text, enable_ner=False)
+    assert "1.24" in scrubbed
+    assert "0.00 - 1.55" in scrubbed
+    assert "96% - 100%" in scrubbed
+    assert "IBS-D" in scrubbed
+
+
 # ===========================================================================
 # C5: Path traversal prevention
 # ===========================================================================

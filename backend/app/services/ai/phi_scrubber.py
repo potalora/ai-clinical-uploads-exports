@@ -19,11 +19,15 @@ PATTERNS = {
     "ip_address": (re.compile(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b"), "[IP]"),
     "url": (re.compile(r"https?://[^\s<>\"]+"), "[URL]"),
     "zip_code": (re.compile(r"\b\d{5}(?:-\d{4})?\b"), "[ZIP]"),
-    "date_full": (
-        re.compile(r"\b(?:0?[1-9]|1[0-2])/(?:0?[1-9]|[12]\d|3[01])/\d{4}\b"),
-        None,
+    # Slash dates (MM/DD/YYYY) are generalized to MM/YYYY below (not a fixed
+    # token), so they are handled separately from these replacement patterns.
+    "account": (
+        re.compile(
+            r"\b(?:account|acct|accession)\s*(?:no\.?|number|num|#|id)?[:\s#]*\d+\b",
+            re.IGNORECASE,
+        ),
+        "[ACCOUNT]",
     ),
-    "account": (re.compile(r"\b(?:account|acct)[:\s#]*\d+\b", re.IGNORECASE), "[ACCOUNT]"),
     "license": (
         re.compile(r"\b(?:license|certificate|DEA)[:\s#]*[A-Z0-9]+\b", re.IGNORECASE),
         "[LICENSE]",
@@ -134,6 +138,16 @@ def scrub_phi(
             parts = re.split(r"[\s,]+", m)
             if len(parts) >= 3:
                 scrubbed = scrubbed.replace(m, f"{parts[0]} {parts[-1]}")
+
+    # Generalize slash dates MM/DD/YYYY -> MM/YYYY (drop the most-identifying
+    # day), mirroring the month-name handling above. Lab reports carry DOB and
+    # collection/report dates in this format; the day is a HIPAA date element.
+    slash_date = re.compile(
+        r"\b(0?[1-9]|1[0-2])/(?:0?[1-9]|[12]\d|3[01])/(\d{4})\b"
+    )
+    scrubbed, n_slash = slash_date.subn(r"\1/\2", scrubbed)
+    if n_slash:
+        report["dates_generalized"] = report.get("dates_generalized", 0) + n_slash
 
     # NER pass: redact free-text person names the patterns/known-identifier
     # passes can't catch (providers, family members). Runs last, after known
