@@ -158,6 +158,49 @@ test.describe("Summaries page", () => {
     await expect(page.getByRole("button", { name: "Natural language" })).toBeVisible();
   });
 
+  test("history entry reopens a saved summary without regenerating", async ({
+    page,
+  }) => {
+    test.skip(!process.env.GEMINI_API_KEY, "Requires GEMINI_API_KEY");
+    test.setTimeout(120_000);
+
+    await browserLogin(page, email, TEST_PASSWORD);
+    await page.goto("/summaries");
+
+    const select = page.locator("select").first();
+    await expect(select).toBeVisible({ timeout: 10_000 });
+    await expect(async () => {
+      const text = await select.textContent();
+      expect(text).not.toContain("No patients found");
+    }).toPass({ timeout: 15_000 });
+
+    // Generate once to populate history.
+    await page.getByRole("button", { name: "Generate summary" }).click();
+    await expect(page.getByText("Summary results")).toBeVisible({
+      timeout: 60_000,
+    });
+
+    // Reload so the in-memory result is cleared — only the saved history remains.
+    await page.reload();
+    await expect(select).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("Summary results")).toHaveCount(0);
+
+    // Open history and click the saved entry.
+    await page
+      .getByRole("button", { name: /Summary history \(\d+\)/ })
+      .click();
+    await page.locator('button:has-text("View →")').first().click();
+
+    // It re-renders quickly (a stored GET, not a 60s Gemini regeneration).
+    await expect(page.getByText("Summary results")).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(page.getByText(/\d+ records \|/)).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Natural language" })
+    ).toBeVisible();
+  });
+
   test("AI disclaimer always visible", async ({ page }) => {
     await browserLogin(page, email, TEST_PASSWORD);
     await page.goto("/summaries");

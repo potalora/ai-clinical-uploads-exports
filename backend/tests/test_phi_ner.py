@@ -119,3 +119,36 @@ def test_drug_names_are_not_redacted_as_locations():
     assert "Rifaximin" in redacted
     assert "Metformin" in redacted
     assert report.get("locations", 0) == 0
+
+
+# --- Resilience: a transient load failure must NOT permanently disable NER ----
+def test_load_failure_is_not_permanently_latched(monkeypatch):
+    """Regression: a single failed model load previously latched NER off for the
+    whole process (PHI hazard). It must self-heal and retry on the next call."""
+    import app.services.ai.phi_ner as ner
+
+    # Reset module singletons.
+    monkeypatch.setattr(ner, "_nlp", None)
+    monkeypatch.setattr(ner, "_warned", False)
+
+    calls = {"n": 0}
+    import spacy as _spacy
+    orig = _spacy.load
+
+    def flaky_load(name):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise MemoryError("simulated transient OOM on first load")
+        return orig(name)
+
+    monkeypatch.setattr(_spacy, "load", flaky_load)
+
+    # First call fails (fail-open: returns text unchanged, NER skipped)...
+    out1, rep1 = ner.redact_named_entities("Seen by Dr. Alice Wong today.")
+    assert rep1 == {} and "Alice" in out1
+
+    # ...but the failure is not latched: the next call retries and succeeds.
+    out2, rep2 = ner.redact_named_entities("Seen by Dr. Alice Wong today.")
+    assert "Alice" not in out2
+    assert rep2.get("names", 0) >= 1
+    assert calls["n"] == 2  # proves a retry happened

@@ -102,3 +102,6 @@ backend/data/
 
 # Superpowers brainstorm sessions
 .superpowers/
+
+# Playwright MCP browser-tool snapshots/screenshots (may contain PHI)
+.playwright-mcp/

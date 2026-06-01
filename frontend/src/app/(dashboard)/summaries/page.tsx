@@ -92,6 +92,64 @@ export default function SummariesPage() {
     loadHistory();
   }, [loadHistory]);
 
+  // Re-open a previously generated summary from history (no re-generation).
+  const handleViewSaved = async (id: string) => {
+    setError(null);
+    try {
+      const d = await api.get<
+        PromptResponse & {
+          response_text?: string | null;
+          response_format?: string | null;
+        }
+      >(`/summary/prompts/${id}`);
+
+      if (!d.response_text) {
+        setError("This saved summary has no stored response text.");
+        return;
+      }
+
+      // The backend stores "both" output as NL + "\n\n---JSON---\n" + JSON.
+      const marker = "\n\n---JSON---\n";
+      let naturalLanguage: string | null = null;
+      let jsonData: Record<string, unknown> | null = null;
+
+      if (d.response_text.includes(marker)) {
+        const [nlPart, jsonPart] = d.response_text.split(marker);
+        naturalLanguage = nlPart;
+        try {
+          jsonData = JSON.parse(jsonPart);
+        } catch {
+          /* leave jsonData null if it can't be parsed */
+        }
+      } else if (d.response_format === "json") {
+        try {
+          jsonData = JSON.parse(d.response_text);
+        } catch {
+          naturalLanguage = d.response_text;
+        }
+      } else {
+        naturalLanguage = d.response_text;
+      }
+
+      setResult({
+        id: d.id,
+        natural_language: naturalLanguage,
+        json_data: jsonData,
+        record_count: d.record_count,
+        duplicate_warning: null,
+        de_identification_report: d.de_identification_report,
+        model_used: d.target_model,
+        generated_at: d.generated_at,
+      });
+      setResultTab(naturalLanguage ? "nl" : "json");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Could not load saved summary"
+      );
+    }
+  };
+
   const handleGenerate = async () => {
     if (!selectedPatient) return;
     setLoading(true);
@@ -592,34 +650,50 @@ export default function SummariesPage() {
         {showHistory && history.length > 0 && (
           <div className="mt-3 space-y-2">
             {history.map((h) => (
-              <RetroCard key={h.id}>
-                <RetroCardContent>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span
-                        className="text-xs font-medium"
-                        style={{ color: "var(--theme-text)" }}
-                      >
-                        {h.summary_type} summary
-                      </span>
-                      <span
-                        className="text-xs ml-3"
-                        style={{ color: "var(--theme-text-muted)" }}
-                      >
-                        {h.record_count} records
-                      </span>
+              <button
+                key={h.id}
+                type="button"
+                onClick={() => handleViewSaved(h.id)}
+                className="block w-full text-left cursor-pointer transition-transform hover:-translate-y-px focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--theme-primary)] rounded"
+                title="View this saved summary"
+              >
+                <RetroCard className="transition-colors hover:border-[var(--theme-primary)]">
+                  <RetroCardContent>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span
+                          className="text-xs font-medium"
+                          style={{ color: "var(--theme-text)" }}
+                        >
+                          {h.summary_type} summary
+                        </span>
+                        <span
+                          className="text-xs ml-3"
+                          style={{ color: "var(--theme-text-muted)" }}
+                        >
+                          {h.record_count} records
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span
+                          className="text-xs"
+                          style={{ color: "var(--theme-text-muted)" }}
+                        >
+                          {h.generated_at
+                            ? new Date(h.generated_at).toLocaleDateString()
+                            : ""}
+                        </span>
+                        <span
+                          className="text-xs font-mono"
+                          style={{ color: "var(--theme-primary)" }}
+                        >
+                          View →
+                        </span>
+                      </div>
                     </div>
-                    <span
-                      className="text-xs"
-                      style={{ color: "var(--theme-text-muted)" }}
-                    >
-                      {h.generated_at
-                        ? new Date(h.generated_at).toLocaleDateString()
-                        : ""}
-                    </span>
-                  </div>
-                </RetroCardContent>
-              </RetroCard>
+                  </RetroCardContent>
+                </RetroCard>
+              </button>
             ))}
           </div>
         )}

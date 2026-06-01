@@ -183,6 +183,7 @@ async def get_prompt(
         "de_identification_report": prompt.de_identification_log,
         "copyable_payload": copyable,
         "response_text": prompt.response_text,
+        "response_format": prompt.response_format,
         "generated_at": prompt.generated_at.isoformat() if prompt.generated_at else None,
     }
 
