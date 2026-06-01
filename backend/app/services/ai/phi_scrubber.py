@@ -4,6 +4,8 @@ import re
 import logging
 from typing import Any
 
+from app.config import settings
+
 logger = logging.getLogger(__name__)
 
 # Regex patterns for all 18 HIPAA identifiers
@@ -48,8 +50,15 @@ def scrub_phi(
     patient_dob: str | None = None,
     patient_address: str | None = None,
     patient_mrn: str | None = None,
+    enable_ner: bool | None = None,
 ) -> tuple[str, dict[str, int]]:
     """Remove PHI from text and return scrubbed text + de-identification report.
+
+    Args:
+        enable_ner: Run the spaCy NER pass for free-text person names (providers,
+            family, anyone not in the patient record). Defaults to
+            ``settings.phi_ner_enabled`` when None. The pass fails open if the
+            model is unavailable.
 
     Returns:
         tuple: (scrubbed_text, report_dict)
@@ -125,5 +134,16 @@ def scrub_phi(
             parts = re.split(r"[\s,]+", m)
             if len(parts) >= 3:
                 scrubbed = scrubbed.replace(m, f"{parts[0]} {parts[-1]}")
+
+    # NER pass: redact free-text person names the patterns/known-identifier
+    # passes can't catch (providers, family members). Runs last, after known
+    # patient names are already replaced. Fails open if the model is missing.
+    use_ner = settings.phi_ner_enabled if enable_ner is None else enable_ner
+    if use_ner:
+        from app.services.ai.phi_ner import redact_person_names
+
+        scrubbed, ner_count = redact_person_names(scrubbed)
+        if ner_count:
+            report["ner_names_scrubbed"] = ner_count
 
     return scrubbed, report

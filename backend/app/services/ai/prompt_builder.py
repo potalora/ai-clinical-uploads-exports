@@ -9,7 +9,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.models.patient import Patient
 from app.models.record import HealthRecord
+from app.services.ai.patient_phi import patient_scrub_args
 from app.services.ai.phi_scrubber import scrub_phi
 
 logger = logging.getLogger(__name__)
@@ -88,8 +90,18 @@ async def build_prompt(
 
     combined_text = "\n\n---\n\n".join(record_texts)
 
-    # De-identify
-    scrubbed_text, deidentification_report = scrub_phi(combined_text)
+    # De-identify. Pass the patient's known identifiers so their own name / MRN
+    # / DOB are stripped (regex patterns alone don't catch free-text names).
+    patient = (
+        await db.execute(
+            select(Patient).where(
+                Patient.id == patient_id, Patient.user_id == user_id
+            )
+        )
+    ).scalar_one_or_none()
+    scrubbed_text, deidentification_report = scrub_phi(
+        combined_text, **patient_scrub_args(patient)
+    )
 
     # Build user prompt
     prompt_instruction = CATEGORY_PROMPTS.get(category or summary_type, CATEGORY_PROMPTS["full"])

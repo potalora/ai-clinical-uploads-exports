@@ -66,6 +66,13 @@ class Settings(BaseSettings):
     extraction_max_retries: int = 3
     small_doc_threshold: int = 3000
 
+    # PHI scrubbing: NER pass for free-text person names (providers, family,
+    # anyone not in the patient record) that the regex patterns can't catch.
+    # Complements targeted known-identifier scrubbing. Fails open (skips) if the
+    # spaCy model is unavailable, so it never blocks a de-identification call.
+    phi_ner_enabled: bool = True
+    phi_ner_spacy_model: str = "en_core_web_md"
+
     # Redis
     redis_url: str = "redis://localhost:6379/0"
 

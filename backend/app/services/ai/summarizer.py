@@ -11,7 +11,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.models.patient import Patient
 from app.models.record import HealthRecord
+from app.services.ai.patient_phi import patient_scrub_args
 from app.services.ai.phi_scrubber import scrub_phi
 from app.services.ai.prompt_builder import _format_record
 
@@ -120,10 +122,20 @@ async def generate_summary(
     if not records:
         raise ValueError("No records found matching the criteria")
 
-    # Format and de-identify
+    # Format and de-identify. Pass the patient's known identifiers so their own
+    # name / MRN / DOB are stripped before the text is sent to Gemini.
     record_texts = [_format_record(r) for r in records]
     combined_text = "\n\n---\n\n".join(record_texts)
-    scrubbed_text, de_id_report = scrub_phi(combined_text)
+    patient = (
+        await db.execute(
+            select(Patient).where(
+                Patient.id == patient_id, Patient.user_id == user_id
+            )
+        )
+    ).scalar_one_or_none()
+    scrubbed_text, de_id_report = scrub_phi(
+        combined_text, **patient_scrub_args(patient)
+    )
 
     # Build prompts
     system_prompt = custom_system_prompt or _get_system_prompt(output_format)

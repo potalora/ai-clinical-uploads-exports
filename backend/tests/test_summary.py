@@ -1,10 +1,69 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from uuid import UUID, uuid4
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.middleware.encryption import encrypt_field
+from app.models.record import HealthRecord
 from tests.conftest import auth_headers, create_test_patient, seed_test_records
+
+
+@pytest.mark.asyncio
+async def test_build_prompt_scrubs_known_patient_name(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """The patient's own name must be removed from the prompt before it leaves the app.
+
+    Regression for the PHI gap where build_prompt called scrub_phi WITHOUT the
+    patient's known identifiers, so free-text names (which the regex patterns
+    can't catch) reached the model.
+    """
+    headers, uid = await auth_headers(client)
+    patient = await create_test_patient(db_session, uid)
+    patient.name_encrypted = encrypt_field("Pedro Otalora")
+    db_session.add(patient)
+    await db_session.commit()
+
+    # A record whose free text embeds the patient's name (display_text + note).
+    rec = HealthRecord(
+        id=uuid4(),
+        patient_id=patient.id,
+        user_id=UUID(uid) if isinstance(uid, str) else uid,
+        record_type="document",
+        fhir_resource_type="DocumentReference",
+        fhir_resource={
+            "resourceType": "DocumentReference",
+            "note": [{"text": "Pedro Otalora seen in clinic; prescribed Rifaximin."}],
+        },
+        source_format="fhir_r4",
+        status="current",
+        display_text="Visit note for Pedro Otalora",
+        effective_date=datetime(2024, 3, 1, tzinfo=timezone.utc),
+    )
+    db_session.add(rec)
+    await db_session.commit()
+
+    resp = await client.post(
+        "/api/v1/summary/build-prompt",
+        headers=headers,
+        json={"patient_id": str(patient.id), "summary_type": "full"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+
+    # The patient's name must NOT appear anywhere in the outgoing prompt payload.
+    assert "Pedro" not in data["user_prompt"]
+    assert "Otalora" not in data["user_prompt"]
+    assert "Pedro" not in data["copyable_payload"]
+    assert "[PATIENT]" in data["user_prompt"]
+    # Clinical content survives de-identification.
+    assert "Rifaximin" in data["user_prompt"]
+    # The de-identification report records the scrub.
+    assert data["de_identification_report"].get("names_scrubbed", 0) >= 1
 
 
 @pytest.mark.asyncio

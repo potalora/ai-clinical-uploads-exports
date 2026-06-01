@@ -484,6 +484,9 @@ async def extraction_progress(
         )
         .where(UploadedFile.user_id == user_id)
         .where(UploadedFile.file_category == "unstructured")
+        # Duplicate files are skipped (no extraction work), so they must not
+        # inflate the progress denominator ("1 of 2 processed" when 1 is a dup).
+        .where(UploadedFile.ingestion_status != "duplicate_file")
     )
     row = result.one()
 
@@ -648,6 +651,8 @@ async def _process_unstructured(upload_id: UUID, file_path: Path, user_id: UUID)
     from app.services.extraction.text_extractor import FileType as _FileType
     from app.services.extraction.entity_extractor import extract_entities_async
     from app.services.ai.phi_scrubber import scrub_phi
+    from app.services.ai.patient_phi import patient_scrub_args
+    from app.models.patient import Patient
 
     async with async_session_factory() as db:
         result = await db.execute(
@@ -675,8 +680,15 @@ async def _process_unstructured(upload_id: UUID, file_path: Path, user_id: UUID)
             upload.extracted_text = text
             await db.commit()
 
-            # Step 2: Scrub PHI before entity extraction — local, no semaphore
-            scrubbed_text, deident_report = scrub_phi(text)
+            # Step 2: Scrub PHI before entity extraction — local, no semaphore.
+            # Pass the user's known patient identifiers so their own name / MRN /
+            # DOB are stripped (regex patterns alone don't catch free-text names).
+            patients = (
+                await db.execute(select(Patient).where(Patient.user_id == user_id))
+            ).scalars().all()
+            scrubbed_text, deident_report = scrub_phi(
+                text, **patient_scrub_args(list(patients))
+            )
 
             # Step 3: Section parsing (skip Gemini call for small docs)
             if len(scrubbed_text) < settings.small_doc_threshold:
