@@ -297,6 +297,19 @@
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 .grid-bento { display: grid; grid-template-columns: 1.5fr 1fr; gap: 18px; }
 
+/* Responsive stacking — placed after the base grid defs so it wins. */
+@media (max-width: 880px) {
+  .grid-bento { grid-template-columns: 1fr; }
+  .stats { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 560px) {
+  .grid-2 { grid-template-columns: 1fr; }
+  .stats { grid-template-columns: 1fr; }
+  /* feed rows: let the source·date meta wrap instead of forcing overflow */
+  .lrow > .badge { min-width: 88px; }
+  .lrow-meta { white-space: normal; text-align: right; }
+}
+
 /* list rows */
 .lrow { display: flex; align-items: center; gap: 13px; padding: 12px 0; border-bottom: 1px solid var(--border); }
 .lrow:last-child { border-bottom: 0; }
@@ -342,7 +355,10 @@
 .ov-link { appearance: none; background: transparent; border: 0; cursor: pointer; font-family: var(--font-body), sans-serif; font-size: 13px; font-weight: 600; color: var(--primary); display: inline-flex; align-items: center; gap: 5px; padding: 4px 2px; white-space: nowrap; }
 .ov-link:hover { text-decoration: underline; }
 
-.markers { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+/* Width-driven columns: ~3 across at the desktop content width, fewer as the
+   window narrows, more if it's wider. The visible count is capped to 2 rows in
+   JS (cols x 2). min(100%, 300px) prevents overflow on very small screens. */
+.markers { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 16px; }
 .marker { position: relative; display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px; cursor: pointer; text-align: left; appearance: none; transition: border-color 0.2s, box-shadow 0.25s, transform 0.2s; min-width: 0; overflow: hidden; }
 .marker:hover { border-color: var(--border-strong); box-shadow: var(--shadow-lg); transform: translateY(-2px); }
 .marker-top { display: flex; flex-direction: column; gap: 3px; margin-bottom: 10px; }
@@ -360,8 +376,6 @@
 .lrow > .badge { min-width: 106px; justify-content: flex-start; flex-shrink: 0; }
 .lrow-val { font-size: 12.5px; color: var(--text-dim); white-space: nowrap; flex-shrink: 0; margin-left: auto; }
 
-@media (max-width: 980px) { .markers { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 560px) { .markers { grid-template-columns: 1fr; } }
 
 /* ============================================================ ADMIN / TABLES */
 .tabs { display: flex; gap: 2px; flex-wrap: wrap; border-bottom: 1px solid var(--border); margin-bottom: 24px; }

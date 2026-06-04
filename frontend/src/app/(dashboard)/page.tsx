@@ -8,10 +8,11 @@
 // code, newest first), and every value/range/flag is shown exactly as the
 // source reported it.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Lock, ChevronRight, ArrowRight } from "lucide-react";
 import { api } from "@/lib/api";
+import { recordTitle } from "@/lib/record-title";
 import type {
   HealthRecord,
   RecordListResponse,
@@ -49,7 +50,7 @@ function FeedRow({ r, onSelect }: { r: RecentRecordItem; onSelect: (id: string) 
     >
       <RetroBadge recordType={r.record_type} />
       <span className="lrow-main">
-        <span className="lrow-title">{r.display_text}</span>
+        <span className="lrow-title">{recordTitle(r)}</span>
       </span>
       <span className="lrow-meta tnum">
         {r.source}
@@ -106,11 +107,29 @@ export default function OverviewPage() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
   const [shown, setShown] = useState(false);
+  const markersRef = useRef<HTMLDivElement>(null);
+  const [markerLimit, setMarkerLimit] = useState(6); // default desktop: 3 cols x 2 rows
 
   useEffect(() => {
     const id = requestAnimationFrame(() => setShown(true));
     return () => cancelAnimationFrame(id);
   }, []);
+
+  // The marker grid shows your most recent results capped to two rows. Columns
+  // are width-driven (CSS auto-fill); we read the rendered column count back and
+  // show cols x 2, recomputing as the browser window resizes.
+  useEffect(() => {
+    const el = markersRef.current;
+    if (!el) return;
+    // ResizeObserver delivers an initial callback on observe() and again on every
+    // resize, so the count stays in sync without a synchronous setState here.
+    const ro = new ResizeObserver(() => {
+      const cols = getComputedStyle(el).gridTemplateColumns.split(" ").filter(Boolean).length;
+      if (cols > 0) setMarkerLimit(cols * 2);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [byCode.length]);
 
   function load() {
     // API → GET /observations/by-code (markers, recency-sorted server-side),
@@ -195,7 +214,8 @@ export default function OverviewPage() {
                 </span>
               </div>
               <button className="ov-link" onClick={() => router.push("/labs")}>
-                All labs &amp; vitals <ArrowRight size={14} />
+                {byCode.length > markerLimit ? `All ${byCode.length} labs & vitals` : "All labs & vitals"}{" "}
+                <ArrowRight size={14} />
               </button>
             </div>
             {byCode.length === 0 ? (
@@ -203,8 +223,8 @@ export default function OverviewPage() {
                 No labs or vitals recorded yet.
               </p>
             ) : (
-              <div className="markers">
-                {byCode.map((m) => (
+              <div className="markers" ref={markersRef}>
+                {byCode.slice(0, markerLimit).map((m) => (
                   <MarkerCard key={m.code} m={m} onSelect={setSelected} />
                 ))}
               </div>

@@ -5,6 +5,8 @@ import { Trash2, Sparkles, Download } from "lucide-react";
 import { toast } from "sonner";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { api } from "@/lib/api";
+import { sourceLabel } from "@/lib/source-label";
+import { recordTitle } from "@/lib/record-title";
 import type { HealthRecord, SeriesResponse, SeriesPoint, SummaryItem } from "@/types/api";
 import { usePreferencesStore } from "@/stores/usePreferencesStore";
 import { useUIStore } from "@/stores/useUIStore";
@@ -178,7 +180,7 @@ export function RecordDetailSheet({ recordId, open, onClose, onDelete }: RecordD
                 )}
                 <div className="min-w-0 flex-1">
                   <h2 className="display" style={{ fontSize: 24, margin: 0, color: "var(--text)" }}>
-                    {record.display_text}
+                    {recordTitle(record)}
                   </h2>
                   <div className="flex items-center gap-2 mt-2.5">
                     <RetroBadge recordType={record.record_type} />
@@ -224,7 +226,7 @@ export function RecordDetailSheet({ recordId, open, onClose, onDelete }: RecordD
               {/* 4. Metadata fields */}
               <div>
                 <Field label="Date" value={fmtDate(record.effective_date)} />
-                <Field label="Source" value={record.source_format} />
+                <Field label="Source" value={sourceLabel(record.source_format)} />
                 {record.code_value && (
                   <Field
                     label="Code"
@@ -281,7 +283,7 @@ export function RecordDetailSheet({ recordId, open, onClose, onDelete }: RecordD
         <ConfirmDialog
           open={confirmOpen}
           title="Delete record?"
-          description={record.display_text}
+          description={recordTitle(record)}
           confirmLabel="Delete"
           cancelLabel="Cancel"
           variant="destructive"
