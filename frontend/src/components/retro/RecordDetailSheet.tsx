@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Trash2, Sparkles } from "lucide-react";
+import { Trash2, Sparkles, Download } from "lucide-react";
+import { toast } from "sonner";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { api } from "@/lib/api";
-import type { HealthRecord, SeriesResponse, SeriesPoint } from "@/types/api";
+import type { HealthRecord, SeriesResponse, SeriesPoint, SummaryItem } from "@/types/api";
 import { usePreferencesStore } from "@/stores/usePreferencesStore";
 import { useUIStore } from "@/stores/useUIStore";
 import { RECORD_TYPE_ICONS, getObservationIcon } from "@/lib/record-icons";
@@ -30,6 +31,9 @@ export function RecordDetailSheet({ recordId, open, onClose, onDelete }: RecordD
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [dontAskChecked, setDontAskChecked] = useState(false);
+  const [addingSummary, setAddingSummary] = useState(false);
+  const [inSummary, setInSummary] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const { skipDeleteConfirm, setSkipDeleteConfirm } = usePreferencesStore();
   const setDetailOpen = useUIStore((s) => s.setDetailOpen);
@@ -48,6 +52,7 @@ export function RecordDetailSheet({ recordId, open, onClose, onDelete }: RecordD
 
     setLoading(true);
     setTrend([]);
+    setInSummary(false);
     api
       .get<HealthRecord>(`/records/${recordId}`)
       .then((rec) => {
@@ -89,6 +94,43 @@ export function RecordDetailSheet({ recordId, open, onClose, onDelete }: RecordD
       .catch(() => {
         setDeleting(false);
       });
+  }
+
+  // Add this record to the working summary (POST /summary/items). Idempotent
+  // server-side, so re-clicking just confirms it's already in.
+  function handleAddToSummary() {
+    if (!record || addingSummary) return;
+    setAddingSummary(true);
+    api
+      .post<SummaryItem>("/summary/items", { record_id: record.id })
+      .then(() => {
+        setInSummary(true);
+        toast.success("Added to summary");
+      })
+      .catch(() => toast.error("Couldn't add to summary"))
+      .finally(() => setAddingSummary(false));
+  }
+
+  // Export this single record's original FHIR resource (GET /records/{id}/fhir).
+  function handleExportFhir() {
+    if (!record || exporting) return;
+    setExporting(true);
+    api
+      .get<Record<string, unknown>>(`/records/${record.id}/fhir`)
+      .then((resource) => {
+        const blob = new Blob([JSON.stringify(resource, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${record.record_type}-${record.id}.fhir.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        toast.success("FHIR resource exported");
+      })
+      .catch(() => toast.error("Couldn't export FHIR"))
+      .finally(() => setExporting(false));
   }
 
   // Resolve icon + colors for the header chip
@@ -204,8 +246,21 @@ export function RecordDetailSheet({ recordId, open, onClose, onDelete }: RecordD
 
               {/* 6. Actions */}
               <div className="flex items-center gap-3 pt-1">
-                <button className="btn" style={{ flex: 1 }} onClick={() => api.get(`/records/${record.id}`)}>
-                  <Sparkles size={15} /> Add to summary
+                <button
+                  className="btn"
+                  style={{ flex: 1 }}
+                  onClick={handleAddToSummary}
+                  disabled={addingSummary || inSummary}
+                >
+                  <Sparkles size={15} /> {inSummary ? "Added to summary" : "Add to summary"}
+                </button>
+                <button
+                  className="btn ghost"
+                  style={{ flex: 1 }}
+                  onClick={handleExportFhir}
+                  disabled={exporting}
+                >
+                  <Download size={15} /> Export FHIR
                 </button>
                 <button
                   onClick={handleDeleteClick}
