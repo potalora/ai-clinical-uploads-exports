@@ -2,7 +2,20 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { Search, Trash2, Upload, FileStack, Copy, Settings, Check } from "lucide-react";
+import {
+  Search,
+  Trash2,
+  Upload,
+  FileStack,
+  Copy,
+  Settings,
+  Check,
+  ChevronDown,
+  ArrowLeftRight,
+  ArrowRight,
+  GitMerge,
+  Undo2,
+} from "lucide-react";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { usePreferencesStore } from "@/stores/usePreferencesStore";
@@ -10,6 +23,12 @@ import type {
   RecordListResponse,
   HealthRecord,
   DedupCandidate,
+  DedupSummary,
+  ScanResponse,
+  BulkResolveResponse,
+  MergeRecord,
+  MergesResponse,
+  UndoBulkResponse,
   UserResponse,
   DashboardOverview,
   AuditLogResponse,
@@ -35,6 +54,7 @@ const TABS = [
   { key: "records", label: "Records", icon: FileStack },
   { key: "extractions", label: "Extractions", icon: Upload },
   { key: "dedup", label: "Duplicates", icon: Copy },
+  { key: "merges", label: "Merges", icon: GitMerge },
   { key: "sys", label: "System", icon: Settings },
 ];
 
@@ -90,6 +110,7 @@ export default function AdminPage() {
       {activeTab === "records" && <RecordsTab />}
       {activeTab === "extractions" && <ExtractionsTab />}
       {activeTab === "dedup" && <DedupTab />}
+      {activeTab === "merges" && <DedupMergesTab />}
       {activeTab === "sys" && <SystemTab />}
     </div>
   );
@@ -562,50 +583,138 @@ function RecordsTab() {
    DEDUP / DUPLICATES TAB
    ========================================== */
 
-function DedupTab() {
-  const [candidates, setCandidates] = useState<DedupCandidate[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(true);
-  const [scanning, setScanning] = useState(false);
-  const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [scanResult, setScanResult] = useState<string | null>(null);
-  const pageSize = 20;
+const BAND_LIMIT = 20;
 
-  const fetchCandidates = useCallback(
-    (p: number) => {
-      setLoading(true);
-      api
-        .get<{ items: DedupCandidate[]; total: number }>(
-          `/dedup/candidates?page=${p}&limit=${pageSize}`
-        )
-        .then((data) => {
-          setCandidates(data.items || []);
-          setTotal(data.total || 0);
-        })
-        .catch(() => {
-          setCandidates([]);
-          setTotal(0);
-        })
-        .finally(() => setLoading(false));
-    },
-    [pageSize]
-  );
+// Score band → the [score_min, score_max) fraction window the API expects.
+function bandRange(band: number): { score_min: number; score_max: number } {
+  return { score_min: band / 100, score_max: (band + 10) / 100 };
+}
+
+// A pending bulk action awaiting confirmation: either an entire score band
+// (resolved server-side by score window) or an explicit set of checked rows.
+type PendingBulk =
+  | { kind: "band"; action: "merge" | "dismiss"; band: number; count: number }
+  | { kind: "selection"; action: "merge" | "dismiss"; ids: string[] };
+
+function bulkMeta(pb: PendingBulk): {
+  title: string;
+  description: string;
+  confirmLabel: string;
+} {
+  const n = pb.kind === "band" ? pb.count : pb.ids.length;
+  const noun = n === 1 ? "candidate" : "candidates";
+  const scope = pb.kind === "band" ? `in the ${pb.band}% band` : "you selected";
+  if (pb.action === "merge") {
+    return {
+      title: `Merge all ${n.toLocaleString()} ${noun}?`,
+      description: `Merge the ${n.toLocaleString()} ${noun} ${scope}. This marks the lower-confidence duplicate of each pair as merged. Reversible — each merge can be undone individually.`,
+      confirmLabel: "Merge all",
+    };
+  }
+  return {
+    title: `Dismiss all ${n.toLocaleString()} ${noun}?`,
+    description: `Dismiss the ${n.toLocaleString()} ${noun} ${scope}. Both records are kept and the pair is cleared from the review queue.`,
+    confirmLabel: "Dismiss all",
+  };
+}
+
+function DedupTab() {
+  // `summary === null` means "not loaded yet" → the only time we show the
+  // full-tab spinner. Once loaded it stays non-null, so refreshes after an
+  // action keep the band list on screen (the open band shows its own spinner).
+  const [summary, setSummary] = useState<DedupSummary | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [scanResult, setScanResult] = useState<ScanResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Open-band accordion + its lazily-loaded, paginated candidate page.
+  const [openBand, setOpenBand] = useState<number | null>(null);
+  const [bandItems, setBandItems] = useState<DedupCandidate[]>([]);
+  const [bandTotal, setBandTotal] = useState(0);
+  const [bandPage, setBandPage] = useState(1);
+  const [bandLoading, setBandLoading] = useState(false);
+
+  // Per-page row selection + in-flight flags.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [rowBusy, setRowBusy] = useState<string | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  const [pendingBulk, setPendingBulk] = useState<PendingBulk | null>(null);
+
+  // API → GET /dedup/candidates/summary (per-band counts, descending).
+  const fetchSummary = useCallback(async (): Promise<DedupSummary | null> => {
+    try {
+      const data = await api.get<DedupSummary>("/dedup/candidates/summary");
+      setSummary(data);
+      return data;
+    } catch {
+      setSummary({ bands: [], total: 0 });
+      return null;
+    }
+  }, []);
+
+  // API → GET /dedup/candidates?score_min&score_max&page&limit. Clamps the
+  // requested page to the last valid page so a bulk action that shrinks a band
+  // never strands us on an empty page.
+  const fetchBand = useCallback(async (band: number, requestedPage: number) => {
+    const { score_min, score_max } = bandRange(band);
+    setBandLoading(true);
+    try {
+      const url = (p: number) =>
+        `/dedup/candidates?score_min=${score_min}&score_max=${score_max}&page=${p}&limit=${BAND_LIMIT}`;
+      let page = Math.max(1, requestedPage);
+      let data = await api.get<{ items: DedupCandidate[]; total: number }>(url(page));
+      let total = data.total || 0;
+      const lastPage = Math.max(1, Math.ceil(total / BAND_LIMIT));
+      if (page > lastPage && total > 0) {
+        page = lastPage;
+        data = await api.get<{ items: DedupCandidate[]; total: number }>(url(page));
+        total = data.total || 0;
+      }
+      setBandItems(data.items || []);
+      setBandTotal(total);
+      setBandPage(page);
+    } catch {
+      setBandItems([]);
+      setBandTotal(0);
+    } finally {
+      setBandLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    fetchCandidates(page);
-  }, [page, fetchCandidates]);
+    void fetchSummary();
+  }, [fetchSummary]);
+
+  // After any resolution, re-pull the summary and, if the open band survives,
+  // its current page; otherwise collapse it. Always clears selection.
+  const refreshAfterAction = useCallback(async () => {
+    setSelected(new Set());
+    const next = await fetchSummary();
+    const bands = next?.bands ?? [];
+    if (openBand != null) {
+      if (bands.some((b) => b.band === openBand)) {
+        await fetchBand(openBand, bandPage);
+      } else {
+        setOpenBand(null);
+        setBandItems([]);
+        setBandTotal(0);
+      }
+    }
+  }, [fetchSummary, fetchBand, openBand, bandPage]);
 
   const handleScan = async () => {
     setScanning(true);
     setError(null);
     setScanResult(null);
     try {
-      const result = await api.post<{ candidates_found: number }>("/dedup/scan");
-      setScanResult(`Scan complete. ${result.candidates_found} potential duplicates found.`);
-      setPage(1);
-      fetchCandidates(1);
+      const result = await api.post<ScanResponse>("/dedup/scan");
+      setScanResult(result);
+      setOpenBand(null);
+      setBandItems([]);
+      setBandTotal(0);
+      setSelected(new Set());
+      await fetchSummary();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Scan failed");
     } finally {
@@ -613,37 +722,90 @@ function DedupTab() {
     }
   };
 
-  const handleMerge = async (candidateId: string) => {
-    setActionLoading(candidateId);
+  const toggleBand = (band: number) => {
+    setError(null);
+    setSelected(new Set());
+    if (openBand === band) {
+      setOpenBand(null);
+      setBandItems([]);
+      setBandTotal(0);
+      return;
+    }
+    setOpenBand(band);
+    setBandPage(1);
+    void fetchBand(band, 1);
+  };
+
+  const goToPage = (p: number) => {
+    if (openBand == null) return;
+    setSelected(new Set());
+    void fetchBand(openBand, p);
+  };
+
+  const handleRowAction = async (action: "merge" | "dismiss", candidateId: string) => {
+    setRowBusy(candidateId);
+    setError(null);
     try {
-      await api.post("/dedup/merge", { candidate_id: candidateId });
-      setCandidates((prev) => prev.filter((c) => c.id !== candidateId));
-      setTotal((t) => Math.max(0, t - 1));
+      await api.post(action === "merge" ? "/dedup/merge" : "/dedup/dismiss", {
+        candidate_id: candidateId,
+      });
+      await refreshAfterAction();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Merge failed");
+      setError(err instanceof Error ? err.message : `Could not ${action} candidate`);
     } finally {
-      setActionLoading(null);
+      setRowBusy(null);
     }
   };
 
-  const handleDismiss = async (candidateId: string) => {
-    setActionLoading(candidateId);
+  const confirmBulk = async () => {
+    if (!pendingBulk) return;
+    const pb = pendingBulk;
+    setPendingBulk(null);
+    setBulkBusy(true);
+    setError(null);
     try {
-      await api.post("/dedup/dismiss", { candidate_id: candidateId });
-      setCandidates((prev) => prev.filter((c) => c.id !== candidateId));
-      setTotal((t) => Math.max(0, t - 1));
+      const body =
+        pb.kind === "band"
+          ? { action: pb.action, ...bandRange(pb.band) }
+          : { action: pb.action, candidate_ids: pb.ids };
+      await api.post<BulkResolveResponse>("/dedup/resolve-bulk", body);
+      await refreshAfterAction();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Dismiss failed");
+      setError(err instanceof Error ? err.message : "Bulk action failed");
     } finally {
-      setActionLoading(null);
+      setBulkBusy(false);
     }
   };
+
+  const toggleRow = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const allOnPageSelected =
+    bandItems.length > 0 && bandItems.every((c) => selected.has(c.id));
+
+  const toggleSelectAllOnPage = () =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (bandItems.every((c) => next.has(c.id))) {
+        bandItems.forEach((c) => next.delete(c.id));
+      } else {
+        bandItems.forEach((c) => next.add(c.id));
+      }
+      return next;
+    });
+
+  const lastPage = Math.max(1, Math.ceil(bandTotal / BAND_LIMIT));
 
   return (
     <div>
       <p className="h-sub" style={{ margin: "0 0 18px" }}>
         Potential duplicates found across sources. Each is scored, then auto-merged, auto-dismissed,
-        or sent here for your review.
+        or grouped by confidence below for your review.
       </p>
 
       <div className="toolbar">
@@ -651,8 +813,37 @@ function DedupTab() {
           {scanning ? "Scanning…" : "Scan for duplicates"}
         </button>
         {scanResult && (
-          <span className="h-sub" style={{ margin: 0 }}>
-            {scanResult}
+          <span
+            className="h-sub"
+            style={{
+              margin: 0,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              flexWrap: "wrap",
+            }}
+          >
+            {scanResult.auto_merged > 0 && (
+              <>
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    color: "var(--success)",
+                    fontWeight: 600,
+                  }}
+                >
+                  <Check size={15} />
+                  {scanResult.auto_merged.toLocaleString()} exact{" "}
+                  {scanResult.auto_merged === 1 ? "duplicate" : "duplicates"} auto-merged
+                </span>
+                <span style={{ color: "var(--text-muted)" }}>·</span>
+              </>
+            )}
+            <span style={{ color: "var(--text-dim)" }}>
+              {scanResult.candidates_found.toLocaleString()} sent to review
+            </span>
           </span>
         )}
       </div>
@@ -670,9 +861,9 @@ function DedupTab() {
         </div>
       )}
 
-      {loading ? (
-        <RetroLoadingState text="Loading candidates" />
-      ) : candidates.length === 0 ? (
+      {summary === null ? (
+        <RetroLoadingState text="Loading duplicates" />
+      ) : summary.total === 0 ? (
         <div className="card-surface pad" style={{ textAlign: "center", padding: "56px 24px" }}>
           <span className="dz-ic" style={{ margin: "0 auto 14px" }}>
             <Check size={22} />
@@ -688,42 +879,232 @@ function DedupTab() {
         <div>
           <div className="between" style={{ marginBottom: 14 }}>
             <span className="h-sub" style={{ margin: 0 }}>
-              {total.toLocaleString()} pending candidates — showing {(page - 1) * pageSize + 1}–
-              {Math.min(page * pageSize, total)}
+              {summary.total.toLocaleString()} pending{" "}
+              {summary.total === 1 ? "candidate" : "candidates"} across {summary.bands.length}{" "}
+              {summary.bands.length === 1 ? "confidence band" : "confidence bands"}
             </span>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button
-                className="btn ghost sm"
-                disabled={page <= 1}
-                onClick={() => setPage((p) => p - 1)}
-              >
-                Prev
-              </button>
-              <button
-                className="btn ghost sm"
-                disabled={page * pageSize >= total}
-                onClick={() => setPage((p) => p + 1)}
-              >
-                Next
-              </button>
-            </div>
           </div>
 
-          {candidates.map((candidate) => (
-            <DedupCandidateCard
-              key={candidate.id}
-              candidate={candidate}
-              busy={actionLoading === candidate.id}
-              onMerge={() => handleMerge(candidate.id)}
-              onKeepBoth={() => handleDismiss(candidate.id)}
-            />
-          ))}
+          {summary.bands.map((b) => {
+            const isOpen = openBand === b.band;
+            return (
+              <div key={b.band} className="card-surface" style={{ marginBottom: 12 }}>
+                <div className="between" style={{ padding: "14px 18px", gap: 12 }}>
+                  <button
+                    onClick={() => toggleBand(b.band)}
+                    aria-expanded={isOpen}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 12,
+                      background: "transparent",
+                      border: 0,
+                      padding: 0,
+                      cursor: "pointer",
+                      textAlign: "left",
+                      flex: 1,
+                      minWidth: 0,
+                    }}
+                  >
+                    <ChevronDown
+                      size={16}
+                      style={{
+                        color: "var(--text-muted)",
+                        flexShrink: 0,
+                        transition: "transform 0.2s ease",
+                        transform: isOpen ? "rotate(180deg)" : "none",
+                      }}
+                    />
+                    <span
+                      className="display"
+                      style={{ fontSize: 19, color: "var(--primary)", whiteSpace: "nowrap" }}
+                    >
+                      {b.band}% match
+                    </span>
+                    <span className="tag">
+                      {b.count.toLocaleString()} {b.count === 1 ? "pair" : "pairs"}
+                    </span>
+                  </button>
+                  <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                    <button
+                      className="btn ghost sm"
+                      disabled={bulkBusy}
+                      onClick={() =>
+                        setPendingBulk({
+                          kind: "band",
+                          action: "merge",
+                          band: b.band,
+                          count: b.count,
+                        })
+                      }
+                    >
+                      Merge all
+                    </button>
+                    <button
+                      className="btn ghost sm"
+                      disabled={bulkBusy}
+                      onClick={() =>
+                        setPendingBulk({
+                          kind: "band",
+                          action: "dismiss",
+                          band: b.band,
+                          count: b.count,
+                        })
+                      }
+                    >
+                      Dismiss all
+                    </button>
+                  </div>
+                </div>
+
+                {isOpen && (
+                  <div style={{ padding: "0 18px 18px" }}>
+                    {bandLoading ? (
+                      <RetroLoadingState text="Loading candidates" />
+                    ) : bandItems.length === 0 ? (
+                      <p className="muted" style={{ fontSize: 13.5, padding: "8px 0 4px" }}>
+                        No candidates in this band.
+                      </p>
+                    ) : (
+                      <>
+                        <div className="between" style={{ marginBottom: 12 }}>
+                          <label
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 8,
+                              cursor: "pointer",
+                              fontSize: 13,
+                              color: "var(--text-dim)",
+                              fontWeight: 600,
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={allOnPageSelected}
+                              onChange={toggleSelectAllOnPage}
+                              style={{ accentColor: "var(--primary)" }}
+                              aria-label="Select all candidates on this page"
+                            />
+                            Select page
+                          </label>
+                          <span className="num" style={{ fontSize: 12 }}>
+                            {(bandPage - 1) * BAND_LIMIT + 1}–
+                            {Math.min(bandPage * BAND_LIMIT, bandTotal)} of{" "}
+                            {bandTotal.toLocaleString()}
+                          </span>
+                        </div>
+
+                        {selected.size > 0 && (
+                          <div
+                            className="between"
+                            style={{
+                              background: "var(--primary-soft)",
+                              border: "1px solid var(--border)",
+                              borderRadius: "var(--radius-sm)",
+                              padding: "10px 14px",
+                              marginBottom: 12,
+                              gap: 10,
+                              flexWrap: "wrap",
+                            }}
+                          >
+                            <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>
+                              {selected.size} selected
+                            </span>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                              <button
+                                className="btn sm"
+                                disabled={bulkBusy}
+                                onClick={() =>
+                                  setPendingBulk({
+                                    kind: "selection",
+                                    action: "merge",
+                                    ids: Array.from(selected),
+                                  })
+                                }
+                              >
+                                Merge {selected.size} selected
+                              </button>
+                              <button
+                                className="btn ghost sm"
+                                disabled={bulkBusy}
+                                onClick={() =>
+                                  setPendingBulk({
+                                    kind: "selection",
+                                    action: "dismiss",
+                                    ids: Array.from(selected),
+                                  })
+                                }
+                              >
+                                Dismiss {selected.size} selected
+                              </button>
+                              <button
+                                className="btn ghost sm"
+                                disabled={bulkBusy}
+                                onClick={() => setSelected(new Set())}
+                              >
+                                Clear selection
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {bandItems.map((c) => (
+                          <DedupRow
+                            key={c.id}
+                            candidate={c}
+                            checked={selected.has(c.id)}
+                            busy={rowBusy === c.id}
+                            disabled={bulkBusy}
+                            onToggle={() => toggleRow(c.id)}
+                            onMerge={() => handleRowAction("merge", c.id)}
+                            onKeepBoth={() => handleRowAction("dismiss", c.id)}
+                          />
+                        ))}
+
+                        <div className="between" style={{ marginTop: 12 }}>
+                          <button
+                            className="btn ghost sm"
+                            disabled={bandPage <= 1 || bandLoading}
+                            onClick={() => goToPage(bandPage - 1)}
+                          >
+                            Prev
+                          </button>
+                          <span className="num" style={{ fontSize: 12 }}>
+                            Page {bandPage} of {lastPage}
+                          </span>
+                          <button
+                            className="btn ghost sm"
+                            disabled={bandPage >= lastPage || bandLoading}
+                            onClick={() => goToPage(bandPage + 1)}
+                          >
+                            Next
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
+
+      <ConfirmDialog
+        open={!!pendingBulk}
+        title={pendingBulk ? bulkMeta(pendingBulk).title : ""}
+        description={pendingBulk ? bulkMeta(pendingBulk).description : ""}
+        confirmLabel={pendingBulk ? bulkMeta(pendingBulk).confirmLabel : "Confirm"}
+        cancelLabel="Cancel"
+        onConfirm={confirmBulk}
+        onCancel={() => setPendingBulk(null)}
+      />
     </div>
   );
 }
 
+// Legacy full-width candidate card — still used by the standalone /dedup page.
 export function DedupCandidateCard({
   candidate,
   busy,
@@ -738,11 +1119,6 @@ export function DedupCandidateCard({
   const reasons = Object.entries(candidate.match_reasons)
     .filter(([, matched]) => matched)
     .map(([reason]) => reason);
-
-  const records = [
-    { label: "RECORD A", rec: candidate.record_a },
-    { label: "RECORD B", rec: candidate.record_b },
-  ];
 
   return (
     <div className="dedup-card">
@@ -774,47 +1150,689 @@ export function DedupCandidateCard({
       )}
 
       <div className="dedup-pair">
-        {records.map(({ label, rec }, i) => (
-          <DedupRecPair key={label} label={label} rec={rec} showVs={i === 1} />
-        ))}
+        <div className="dedup-rec">
+          <RecordMini rec={candidate.record_a} />
+        </div>
+        <div className="dedup-vs">VS</div>
+        <div className="dedup-rec">
+          <RecordMini rec={candidate.record_b} />
+        </div>
       </div>
     </div>
   );
 }
 
-function DedupRecPair({
-  label,
-  rec,
-  showVs,
+// One candidate as a tight, checkbox-selectable row inside a confidence band.
+// The A↔B comparison reuses RecordMini; actions mirror the legacy card.
+function DedupRow({
+  candidate,
+  checked,
+  busy,
+  disabled,
+  onToggle,
+  onMerge,
+  onKeepBoth,
 }: {
-  label: string;
-  rec: DedupCandidate["record_a"];
-  showVs: boolean;
+  candidate: DedupCandidate;
+  checked: boolean;
+  busy: boolean;
+  disabled: boolean;
+  onToggle: () => void;
+  onMerge: () => void;
+  onKeepBoth: () => void;
 }) {
+  const reasons = Object.entries(candidate.match_reasons)
+    .filter(([, matched]) => matched)
+    .map(([reason]) => reason);
+
   return (
-    <>
-      {showVs && <div className="dedup-vs">VS</div>}
-      <div className="dedup-rec">
-        {rec ? (
-          <>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-              <RetroBadge recordType={rec.record_type} short />
-              <span className="num" style={{ fontSize: 11 }}>
-                {label}
-              </span>
-            </div>
-            <div style={{ fontWeight: 600, fontSize: 14.5 }}>{recordTitle(rec)}</div>
-            <div className="num" style={{ fontSize: 12, marginTop: 6 }}>
-              {sourceLabel(rec.source_format)} · {fmtDate(rec.effective_date)}
-            </div>
-          </>
-        ) : (
-          <span className="muted" style={{ fontSize: 13 }}>
-            {label} unavailable
+    <div
+      style={{
+        background: "var(--card-2)",
+        border: `1px solid ${checked ? "var(--primary)" : "var(--border)"}`,
+        borderRadius: "var(--radius-sm)",
+        padding: "12px 14px",
+        marginBottom: 8,
+        transition: "border-color 0.16s",
+      }}
+    >
+      <div
+        className="between"
+        style={{ gap: 12, marginBottom: 10, alignItems: "flex-start" }}
+      >
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            cursor: "pointer",
+            minWidth: 0,
+            flexWrap: "wrap",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={checked}
+            onChange={onToggle}
+            disabled={disabled}
+            style={{ accentColor: "var(--primary)", flexShrink: 0 }}
+            aria-label="Select candidate"
+          />
+          <span
+            className="num"
+            style={{ fontSize: 12, color: "var(--primary)", fontWeight: 700 }}
+          >
+            {Math.round(candidate.similarity_score * 100)}%
           </span>
-        )}
+          {reasons.slice(0, 4).map((r) => (
+            <span className="reason" key={r}>
+              {r}
+            </span>
+          ))}
+        </label>
+        <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+          <button className="btn sm" onClick={onMerge} disabled={busy || disabled}>
+            {busy ? "…" : "Merge"}
+          </button>
+          <button className="btn ghost sm" onClick={onKeepBoth} disabled={busy || disabled}>
+            Keep both
+          </button>
+        </div>
       </div>
-    </>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr auto 1fr",
+          gap: 12,
+          alignItems: "center",
+        }}
+      >
+        <RecordMini rec={candidate.record_a} />
+        <ArrowLeftRight size={15} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+        <RecordMini rec={candidate.record_b} />
+      </div>
+    </div>
+  );
+}
+
+// Compact single-record cell for the A↔B comparison (badge + title + meta).
+export function RecordMini({ rec }: { rec: DedupCandidate["record_a"] }) {
+  if (!rec) {
+    return (
+      <span className="muted" style={{ fontSize: 13 }}>
+        Record unavailable
+      </span>
+    );
+  }
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          marginBottom: 4,
+          minWidth: 0,
+        }}
+      >
+        <RetroBadge recordType={rec.record_type} short />
+        <span
+          style={{
+            fontWeight: 600,
+            fontSize: 13.5,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {recordTitle(rec)}
+        </span>
+      </div>
+      <div className="num" style={{ fontSize: 11.5 }}>
+        {sourceLabel(rec.source_format)} · {fmtDate(rec.effective_date)}
+      </div>
+    </div>
+  );
+}
+
+/* ==========================================
+   MERGES TAB — completed-merge history + unmerge
+   ========================================== */
+
+const MERGES_LIMIT = 20;
+
+// Record types offered in the Merges type filter — the common clinical ones
+// (the queue rarely produces merges outside this set; "All types" clears it).
+const MERGE_TYPE_OPTIONS = [
+  "condition",
+  "observation",
+  "medication",
+  "procedure",
+  "encounter",
+  "immunization",
+  "document",
+  "allergy",
+  "service_request",
+  "diagnostic_report",
+];
+
+type MergeSource = "" | "auto" | "manual";
+
+function DedupMergesTab() {
+  // `data === null` only before the first load → the only full-tab spinner.
+  // It stays non-null afterward so filter changes / refreshes keep the list on
+  // screen (dimmed via `loading`) instead of flashing the spinner.
+  const [data, setData] = useState<MergesResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Filters. `source` is the segmented Auto/Manual toggle; "" = both.
+  const [source, setSource] = useState<MergeSource>("");
+  const [recordType, setRecordType] = useState("");
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  // Per-page selection + in-flight flags.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [rowBusy, setRowBusy] = useState<string | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  // A pending bulk unmerge awaiting destructive confirmation (the candidate ids).
+  const [pendingBulk, setPendingBulk] = useState<string[] | null>(null);
+
+  // Debounce the search box (~300ms); settling the query resets to page 1.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // API → GET /dedup/merges?source=&record_type=&search=&page=&limit=.
+  // Re-runs on any filter/page change and after each unmerge (refreshKey).
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      try {
+        const params = new URLSearchParams();
+        if (source) params.set("source", source);
+        if (recordType) params.set("record_type", recordType);
+        const q = debouncedSearch.trim();
+        if (q) params.set("search", q);
+        params.set("page", String(page));
+        params.set("limit", String(MERGES_LIMIT));
+        const resp = await api.get<MergesResponse>(`/dedup/merges?${params.toString()}`);
+        if (cancelled) return;
+        // Clamp to the last valid page so an unmerge that empties the tail page
+        // never strands us on a blank view.
+        const lastPage = Math.max(1, Math.ceil((resp.total || 0) / MERGES_LIMIT));
+        if (page > lastPage && resp.total > 0) {
+          setPage(lastPage);
+          return;
+        }
+        setData(resp);
+        setError(null);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Could not load merges");
+          setData({ items: [], total: 0, counts: { auto: 0, manual: 0 } });
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [source, recordType, debouncedSearch, page, refreshKey]);
+
+  const refreshAfterUnmerge = useCallback(() => {
+    setSelected(new Set());
+    setRefreshKey((k) => k + 1);
+  }, []);
+
+  const changeSource = (next: MergeSource) => {
+    setSource(next);
+    setPage(1);
+    setSelected(new Set());
+  };
+
+  const changeType = (next: string) => {
+    setRecordType(next);
+    setPage(1);
+    setSelected(new Set());
+  };
+
+  const clearFilters = () => {
+    setSource("");
+    setRecordType("");
+    setSearch("");
+    setDebouncedSearch("");
+    setPage(1);
+    setSelected(new Set());
+  };
+
+  const handleUnmergeOne = async (candidateId: string) => {
+    setRowBusy(candidateId);
+    setError(null);
+    try {
+      await api.post("/dedup/undo-merge", { candidate_id: candidateId });
+      refreshAfterUnmerge();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not unmerge");
+    } finally {
+      setRowBusy(null);
+    }
+  };
+
+  const confirmBulk = async () => {
+    if (!pendingBulk) return;
+    const ids = pendingBulk;
+    setPendingBulk(null);
+    setBulkBusy(true);
+    setError(null);
+    try {
+      await api.post<UndoBulkResponse>("/dedup/undo-bulk", { candidate_ids: ids });
+      refreshAfterUnmerge();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Bulk unmerge failed");
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const toggleRow = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const items = data?.items ?? [];
+  const total = data?.total ?? 0;
+  const autoCount = data?.counts.auto ?? 0;
+  const manualCount = data?.counts.manual ?? 0;
+  // The "All" chip counts both buckets so it stays stable while toggling source.
+  const allCount = autoCount + manualCount;
+  const lastPage = Math.max(1, Math.ceil(total / MERGES_LIMIT));
+  const hasFilters = source !== "" || recordType !== "" || debouncedSearch.trim() !== "";
+
+  const allOnPageSelected =
+    items.length > 0 && items.every((m) => selected.has(m.candidate_id));
+  const toggleSelectAllOnPage = () =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (items.every((m) => next.has(m.candidate_id))) {
+        items.forEach((m) => next.delete(m.candidate_id));
+      } else {
+        items.forEach((m) => next.add(m.candidate_id));
+      }
+      return next;
+    });
+
+  return (
+    <div>
+      <p className="h-sub" style={{ margin: "0 0 18px" }}>
+        Every merge the system made — auto-merged exact duplicates and the ones you merged. Unmerge
+        any to keep the records separate.
+      </p>
+
+      <div className="toolbar">
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {(
+            [
+              { key: "" as MergeSource, label: "All", count: allCount },
+              { key: "auto" as MergeSource, label: "Auto", count: autoCount },
+              { key: "manual" as MergeSource, label: "Manual", count: manualCount },
+            ]
+          ).map((chip) => (
+            <button
+              key={chip.label}
+              className="filt"
+              aria-pressed={source === chip.key}
+              onClick={() => changeSource(chip.key)}
+            >
+              {chip.label}{" "}
+              <span
+                style={{
+                  fontFamily: "var(--font-mono), monospace",
+                  fontSize: 11.5,
+                  opacity: 0.7,
+                }}
+              >
+                {chip.count.toLocaleString()}
+              </span>
+            </button>
+          ))}
+        </div>
+        <select
+          className="selectbox"
+          value={recordType}
+          onChange={(e) => changeType(e.target.value)}
+          aria-label="Filter merges by record type"
+        >
+          <option value="">All types</option>
+          {MERGE_TYPE_OPTIONS.map((t) => (
+            <option key={t} value={t}>
+              {RECORD_TYPE_LABELS[t] || t}
+            </option>
+          ))}
+        </select>
+        <div className="search">
+          <Search size={16} />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search merged records…"
+          />
+        </div>
+      </div>
+
+      {error && (
+        <div className="card-surface pad" style={{ marginBottom: 14 }}>
+          <div className="between" style={{ justifyContent: "flex-start", gap: 12 }}>
+            <span
+              className="tag"
+              style={{ background: "var(--danger)", color: "var(--on-primary)" }}
+            >
+              ERROR
+            </span>
+            <p className="muted" style={{ fontSize: 13.5, margin: 0 }}>
+              {error}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {data === null ? (
+        <RetroLoadingState text="Loading merges" />
+      ) : total === 0 ? (
+        <div className="card-surface pad" style={{ textAlign: "center", padding: "56px 24px" }}>
+          <span className="dz-ic" style={{ margin: "0 auto 14px" }}>
+            <GitMerge size={22} />
+          </span>
+          {hasFilters ? (
+            <>
+              <div className="muted" style={{ fontSize: 14.5 }}>
+                No merges match these filters.
+              </div>
+              <div style={{ marginTop: 14 }}>
+                <button className="btn ghost sm" onClick={clearFilters}>
+                  Clear filters
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="muted" style={{ fontSize: 14.5 }}>
+              No merges yet — run a scan from the Duplicates tab.
+            </div>
+          )}
+        </div>
+      ) : (
+        <div style={{ opacity: loading ? 0.55 : 1, transition: "opacity 0.15s ease" }}>
+          {selected.size > 0 && (
+            <div
+              className="between"
+              style={{
+                background: "var(--primary-soft)",
+                border: "1px solid var(--border)",
+                borderRadius: "var(--radius-sm)",
+                padding: "10px 14px",
+                marginBottom: 12,
+                gap: 10,
+                flexWrap: "wrap",
+              }}
+            >
+              <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>
+                {selected.size} selected
+              </span>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button
+                  className="btn sm"
+                  disabled={bulkBusy}
+                  onClick={() => setPendingBulk(Array.from(selected))}
+                >
+                  Unmerge {selected.size} selected
+                </button>
+                <button
+                  className="btn ghost sm"
+                  disabled={bulkBusy}
+                  onClick={() => setSelected(new Set())}
+                >
+                  Clear selection
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="between" style={{ marginBottom: 12 }}>
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                cursor: "pointer",
+                fontSize: 13,
+                color: "var(--text-dim)",
+                fontWeight: 600,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={allOnPageSelected}
+                onChange={toggleSelectAllOnPage}
+                style={{ accentColor: "var(--primary)" }}
+                aria-label="Select all merges on this page"
+              />
+              Select page
+            </label>
+            <span className="num" style={{ fontSize: 12 }}>
+              {(page - 1) * MERGES_LIMIT + 1}–{Math.min(page * MERGES_LIMIT, total)} of{" "}
+              {total.toLocaleString()}
+            </span>
+          </div>
+
+          {items.map((m) => (
+            <MergeRow
+              key={m.candidate_id}
+              merge={m}
+              checked={selected.has(m.candidate_id)}
+              busy={rowBusy === m.candidate_id}
+              disabled={bulkBusy}
+              onToggle={() => toggleRow(m.candidate_id)}
+              onUnmerge={() => handleUnmergeOne(m.candidate_id)}
+            />
+          ))}
+
+          <div className="between" style={{ marginTop: 12 }}>
+            <button
+              className="btn ghost sm"
+              disabled={page <= 1 || loading}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              Prev
+            </button>
+            <span className="num" style={{ fontSize: 12 }}>
+              Page {page} of {lastPage}
+            </span>
+            <button
+              className="btn ghost sm"
+              disabled={page >= lastPage || loading}
+              onClick={() => setPage((p) => p + 1)}
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={!!pendingBulk}
+        title={`Unmerge ${pendingBulk?.length ?? 0} ${
+          (pendingBulk?.length ?? 0) === 1 ? "record" : "records"
+        }?`}
+        description="They'll be restored as separate records and kept out of future merge suggestions."
+        confirmLabel="Unmerge"
+        cancelLabel="Cancel"
+        variant="destructive"
+        onConfirm={confirmBulk}
+        onCancel={() => setPendingBulk(null)}
+      />
+    </div>
+  );
+}
+
+// One completed merge as a tight, checkbox-selectable row: an AUTO/YOU badge,
+// score, match reasons, and a clear "archived → merged into → survivor" flow.
+function MergeRow({
+  merge,
+  checked,
+  busy,
+  disabled,
+  onToggle,
+  onUnmerge,
+}: {
+  merge: MergeRecord;
+  checked: boolean;
+  busy: boolean;
+  disabled: boolean;
+  onToggle: () => void;
+  onUnmerge: () => void;
+}) {
+  const reasons = Object.entries(merge.match_reasons)
+    .filter(([, matched]) => Boolean(matched))
+    .map(([reason]) => reason);
+
+  return (
+    <div
+      style={{
+        background: "var(--card-2)",
+        border: `1px solid ${checked ? "var(--primary)" : "var(--border)"}`,
+        borderRadius: "var(--radius-sm)",
+        padding: "12px 14px",
+        marginBottom: 8,
+        transition: "border-color 0.16s",
+      }}
+    >
+      <div className="between" style={{ gap: 12, marginBottom: 10, alignItems: "flex-start" }}>
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            cursor: "pointer",
+            minWidth: 0,
+            flexWrap: "wrap",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={checked}
+            onChange={onToggle}
+            disabled={disabled}
+            style={{ accentColor: "var(--primary)", flexShrink: 0 }}
+            aria-label="Select merge"
+          />
+          {merge.auto_resolved ? (
+            <span className="tag">
+              <span className="tdot" style={{ background: "var(--primary)" }} />
+              AUTO
+            </span>
+          ) : (
+            <span
+              className="tag"
+              style={{ background: "var(--primary)", color: "var(--on-primary)" }}
+            >
+              YOU
+            </span>
+          )}
+          <span className="num" style={{ fontSize: 12, color: "var(--primary)", fontWeight: 700 }}>
+            {Math.round(merge.similarity_score * 100)}%
+          </span>
+          {reasons.slice(0, 4).map((r) => (
+            <span className="reason" key={r}>
+              {r}
+            </span>
+          ))}
+        </label>
+        <button
+          className="btn ghost sm"
+          onClick={onUnmerge}
+          disabled={busy || disabled}
+          title="Restore both records as separate"
+        >
+          <Undo2 size={14} />
+          {busy ? "…" : "Unmerge"}
+        </button>
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr auto 1fr",
+          gap: 12,
+          alignItems: "center",
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <div
+            className="num"
+            style={{
+              fontSize: 9.5,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              color: "var(--text-muted)",
+              marginBottom: 6,
+            }}
+          >
+            Merged away
+          </div>
+          <RecordMini rec={merge.archived} />
+        </div>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 3,
+            color: "var(--text-muted)",
+            flexShrink: 0,
+          }}
+        >
+          <ArrowRight size={16} />
+          <span style={{ fontSize: 9.5, fontFamily: "var(--font-mono), monospace" }}>
+            merged into
+          </span>
+        </div>
+        <div
+          style={{
+            minWidth: 0,
+            paddingLeft: 12,
+            borderLeft: "2px solid var(--success)",
+          }}
+        >
+          <div
+            className="num"
+            style={{
+              fontSize: 9.5,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              color: "var(--success)",
+              marginBottom: 6,
+            }}
+          >
+            Kept
+          </div>
+          <RecordMini rec={merge.survivor} />
+        </div>
+      </div>
+    </div>
   );
 }
 

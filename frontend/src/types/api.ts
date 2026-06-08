@@ -334,3 +334,62 @@ export interface DedupCandidate {
     effective_date: string | null;
   } | null;
 }
+
+// Per-band candidate counts for the dedup review queue. `band` is the floor-10
+// percent bucket (90, 80, 70…); only non-empty bands are returned, descending.
+// API → GET /dedup/candidates/summary.
+export interface DedupSummary {
+  bands: { band: number; count: number }[];
+  total: number;
+}
+
+// API → POST /dedup/scan. Exact duplicates (score ≥ 0.95) are auto-merged;
+// the remainder land in the review queue.
+export interface ScanResponse {
+  auto_merged: number;
+  candidates_found: number;
+}
+
+// API → POST /dedup/resolve-bulk. `count` is how many candidates were resolved.
+export interface BulkResolveResponse {
+  action: string;
+  count: number;
+}
+
+// --- Merge history (Admin → Merges tab) ----------------------------------
+// A compact record cell shared by both sides of a completed merge. Structurally
+// matches the per-record shape on DedupCandidate, so RecordMini renders it.
+export interface RecordMiniData {
+  id: string;
+  display_text: string;
+  record_type: string;
+  source_format: string;
+  effective_date: string | null;
+}
+
+// One completed merge: `archived` was folded into `survivor`. `auto_resolved`
+// true → auto-merged exact duplicate; false → the user merged it. Reversible
+// via /dedup/undo-merge. API → GET /dedup/merges.
+export interface MergeRecord {
+  candidate_id: string;
+  similarity_score: number;
+  match_reasons: Record<string, unknown>;
+  auto_resolved: boolean;
+  resolved_at: string | null;
+  survivor: RecordMiniData;
+  archived: RecordMiniData;
+}
+
+// API → GET /dedup/merges?source=&record_type=&search=&page=&limit=.
+// `counts` splits the (record_type/search-scoped) set by who merged it, so the
+// source chips stay stable when toggling between Auto/Manual.
+export interface MergesResponse {
+  items: MergeRecord[];
+  total: number;
+  counts: { auto: number; manual: number };
+}
+
+// API → POST /dedup/undo-bulk. `count` is how many merges were reversed.
+export interface UndoBulkResponse {
+  count: number;
+}

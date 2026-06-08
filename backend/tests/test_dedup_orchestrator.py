@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from app.services.dedup.detector import (
     detect_upload_duplicates,
+    _apply_merge,
     _compare_records,
     _fuzzy_match,
 )
@@ -86,6 +87,21 @@ class TestCompareRecordsUpgraded:
         score, reasons = _compare_records(a, b)
         assert score >= 0.5  # 0.4 + 0.1
         assert reasons.get("cross_source") is True
+
+
+class TestApplyMerge:
+    """Shared merge helper sets the duplicate flags on the secondary record."""
+
+    def test_apply_merge_sets_duplicate_flags(self):
+        primary_id = uuid4()
+        secondary = FakeRecord()
+        secondary.is_duplicate = False
+        secondary.merged_into_id = None
+
+        _apply_merge(secondary, primary_id)
+
+        assert secondary.is_duplicate is True
+        assert secondary.merged_into_id == primary_id
 
 
 class TestDateDistancePenalty:

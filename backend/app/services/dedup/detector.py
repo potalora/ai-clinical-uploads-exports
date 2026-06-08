@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
@@ -11,19 +12,42 @@ from app.models.record import HealthRecord
 
 logger = logging.getLogger(__name__)
 
+# Pairs scoring at or above this threshold are confident enough to merge
+# automatically instead of queueing for user review.
+AUTO_MERGE_THRESHOLD = 0.95
+
+
+def _apply_merge(secondary: HealthRecord, primary_id: UUID) -> None:
+    """Mark ``secondary`` as a duplicate folded into ``primary_id``.
+
+    Shared by the scan auto-merge path and the manual ``/dedup/merge`` endpoint
+    so both write the duplicate flags identically.
+
+    Args:
+        secondary: The record being archived as a duplicate.
+        primary_id: The id of the surviving primary record.
+    """
+    secondary.is_duplicate = True
+    secondary.merged_into_id = primary_id
+
 
 async def detect_duplicates(
     db: AsyncSession,
     user_id: UUID,
     patient_id: UUID,
-) -> int:
+) -> dict[str, int]:
     """Scan for duplicate records and create dedup candidates.
 
     Uses hash-based bucketing to reduce comparisons from O(n^2) to
     bucket-scoped pairs, batch existence checks via an in-memory set,
     and bulk inserts for new candidates.
 
-    Returns the number of new candidates found.
+    Pairs scoring at or above ``AUTO_MERGE_THRESHOLD`` are merged automatically
+    (the earlier-ordered record is the primary) and recorded as resolved
+    candidates; pairs in the 0.70–0.95 band are queued as pending for review.
+
+    Returns:
+        A dict ``{"candidates_found": <pending count>, "auto_merged": <count>}``.
     """
     # Fetch all active records for patient
     result = await db.execute(
@@ -39,7 +63,7 @@ async def detect_duplicates(
     records = result.scalars().all()
 
     if len(records) < 2:
-        return 0
+        return {"candidates_found": 0, "auto_merged": 0}
 
     # Pre-load all existing candidate pairs into a set (batch existence check)
     existing_result = await db.execute(
@@ -57,27 +81,54 @@ async def detect_duplicates(
         buckets.setdefault(key, []).append(r)
 
     new_candidates: list[dict] = []
+    pending_count = 0
+    auto_merged_count = 0
+    now = datetime.now(timezone.utc)
 
     for key, bucket in buckets.items():
         if len(bucket) < 2:
             continue
         for i, a in enumerate(bucket):
             for b in bucket[i + 1 :]:
+                # A record already folded into another (this run's auto-merges)
+                # must not chain into further pairs.
+                if a.is_duplicate or b.is_duplicate:
+                    continue
                 score, reasons = _compare_records(a, b)
-                if score >= 0.7:
-                    if (a.id, b.id) in existing_pairs:
-                        continue
-                    new_candidates.append({
-                        "id": uuid4(),
-                        "record_a_id": a.id,
-                        "record_b_id": b.id,
-                        "similarity_score": score,
-                        "match_reasons": reasons,
-                        "status": "pending",
+                if score < 0.7:
+                    continue
+                if (a.id, b.id) in existing_pairs:
+                    continue
+
+                candidate = {
+                    "id": uuid4(),
+                    "record_a_id": a.id,
+                    "record_b_id": b.id,
+                    "similarity_score": score,
+                    "match_reasons": reasons,
+                }
+                if score >= AUTO_MERGE_THRESHOLD:
+                    # The earlier-ordered record (a) is the surviving primary.
+                    _apply_merge(b, a.id)
+                    candidate.update({
+                        "status": "merged",
+                        "resolved_by": user_id,
+                        "resolved_at": now,
+                        "auto_resolved": True,
                     })
-                    # Add to existing_pairs to prevent duplicate inserts within same run
-                    existing_pairs.add((a.id, b.id))
-                    existing_pairs.add((b.id, a.id))
+                    auto_merged_count += 1
+                else:
+                    candidate.update({
+                        "status": "pending",
+                        "resolved_by": None,
+                        "resolved_at": None,
+                        "auto_resolved": False,
+                    })
+                    pending_count += 1
+                new_candidates.append(candidate)
+                # Add to existing_pairs to prevent duplicate inserts within same run
+                existing_pairs.add((a.id, b.id))
+                existing_pairs.add((b.id, a.id))
 
     if new_candidates:
         from sqlalchemy import insert
@@ -88,9 +139,11 @@ async def detect_duplicates(
             await db.execute(insert(DedupCandidate), batch)
         await db.commit()
 
-    candidates_found = len(new_candidates)
-    logger.info("Found %d dedup candidates for patient %s", candidates_found, patient_id)
-    return candidates_found
+    logger.info(
+        "Patient %s: %d pending candidates, %d auto-merged",
+        patient_id, pending_count, auto_merged_count,
+    )
+    return {"candidates_found": pending_count, "auto_merged": auto_merged_count}
 
 
 async def detect_upload_duplicates(

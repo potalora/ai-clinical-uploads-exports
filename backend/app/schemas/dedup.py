@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class DedupCandidateResponse(BaseModel):
@@ -61,8 +61,36 @@ class ResolutionAction(BaseModel):
 
 
 class BulkResolveRequest(BaseModel):
-    resolutions: list[ResolutionAction]
+    """Bulk resolve pending dedup candidates by ids or by score band.
+
+    When ``candidate_ids`` is supplied those specific pending candidates are
+    acted on; otherwise every pending candidate whose score falls in
+    ``[score_min, score_max)`` is acted on (user-scoped in the handler).
+    """
+
+    action: str  # "merge" | "dismiss"
+    candidate_ids: list[UUID] | None = None
+    score_min: float | None = None
+    score_max: float | None = None
+
+    @field_validator("action")
+    @classmethod
+    def _validate_action(cls, value: str) -> str:
+        """Reject any action other than merge/dismiss."""
+        if value not in ("merge", "dismiss"):
+            raise ValueError("action must be 'merge' or 'dismiss'")
+        return value
 
 
 class UndoMergeRequest(BaseModel):
     candidate_id: UUID
+
+
+class UndoBulkRequest(BaseModel):
+    """Bulk-undo a set of merged candidates by id.
+
+    Each id must reference a ``status=="merged"`` candidate the requesting user
+    owns; non-matching ids are silently skipped by the handler.
+    """
+
+    candidate_ids: list[UUID]
