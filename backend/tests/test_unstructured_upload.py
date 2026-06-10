@@ -474,6 +474,54 @@ async def test_trigger_extraction_allows_retry_of_processing(
 
 
 @pytest.mark.asyncio
+async def test_trigger_extraction_skips_actively_processing(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """Re-triggering a file a worker is ACTIVELY processing (recent
+    processing_started_at) must be a no-op. Resetting it to pending_extraction
+    would let the worker re-claim it and run a second concurrent extraction
+    pass (wasting Gemini calls, risking duplicate records). Genuinely stuck
+    files — old/absent processing_started_at — stay retriable (covered by
+    test_trigger_extraction_allows_retry_of_processing).
+    """
+    from app.models.uploaded_file import UploadedFile
+    from datetime import datetime, timezone
+    from uuid import uuid4
+
+    headers, user_id = await auth_headers(client)
+
+    upload = UploadedFile(
+        id=uuid4(),
+        user_id=user_id,
+        filename="active.pdf",
+        mime_type="application/pdf",
+        file_size_bytes=1000,
+        file_hash="hash_active_processing",
+        storage_path="/tmp/active.pdf",
+        ingestion_status="processing",
+        file_category="unstructured",
+        processing_started_at=datetime.now(timezone.utc),  # actively processing now
+    )
+    db_session.add(upload)
+    await db_session.commit()
+
+    with PATCH_BG_TASK, PATCH_WORKER:
+        resp = await client.post(
+            "/api/v1/upload/trigger-extraction",
+            json={"upload_ids": [str(upload.id)]},
+            headers=headers,
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["triggered"] == 0
+    assert data["failed"] == 1
+    # Status must be untouched — not reset to pending_extraction
+    await db_session.refresh(upload)
+    assert upload.ingestion_status == "processing"
+
+
+@pytest.mark.asyncio
 async def test_trigger_extraction_allows_retry_of_failed(
     client: AsyncClient, db_session: AsyncSession
 ):
@@ -631,60 +679,43 @@ async def test_auto_confirm_creates_records(client: AsyncClient, db_session: Asy
 
 
 @pytest.mark.asyncio
-async def test_auto_confirm_no_patient_falls_back(
+async def test_ensure_patient_creates_placeholder_when_missing(
     client: AsyncClient, db_session: AsyncSession
 ):
-    """Auto-confirm falls back to awaiting_confirmation when no patient exists."""
-    headers, user_id = await auth_headers(client)
-    # Deliberately do NOT create a patient
-
-    from app.models.uploaded_file import UploadedFile
+    """Unstructured-first users have no Patient yet. `_ensure_patient` must
+    create a blank (no-PHI) placeholder so the auto-confirm step produces
+    records instead of stalling at awaiting_confirmation — the "Reimagined"
+    frontend has no manual-confirm UI, so that fallback is a dead end.
+    A later structured upload backfills this blank patient via
+    get_or_create_patient.
+    """
+    from app.api.upload import _ensure_patient
     from app.models.patient import Patient
     from sqlalchemy import select
-    from uuid import uuid4
 
-    # Verify no patients exist for this user
-    result = await db_session.execute(
-        select(Patient).where(Patient.user_id == user_id).limit(1)
-    )
-    assert result.scalar_one_or_none() is None
+    headers, user_id = await auth_headers(client)
 
-    upload = UploadedFile(
-        id=uuid4(),
-        user_id=user_id,
-        filename="nopatient.rtf",
-        mime_type="application/rtf",
-        file_size_bytes=500,
-        file_hash="hash_nopatient",
-        storage_path="/tmp/nopatient.rtf",
-        ingestion_status="processing",
-        file_category="unstructured",
-        extraction_entities=[
-            {
-                "entity_class": "condition",
-                "text": "Diabetes",
-                "attributes": {"status": "active"},
-                "start_pos": 0,
-                "end_pos": 8,
-                "confidence": 0.9,
-            },
-        ],
-    )
-    db_session.add(upload)
+    # No patient initially
+    existing = (
+        await db_session.execute(select(Patient).where(Patient.user_id == user_id))
+    ).scalars().all()
+    assert existing == []
+
+    patient = await _ensure_patient(db_session, user_id)
     await db_session.commit()
+    assert patient is not None
+    assert str(patient.user_id) == str(user_id)
+    # Placeholder carries no PHI
+    assert patient.name_encrypted is None
+    assert patient.mrn_encrypted is None
 
-    # Simulate the branch where no patient is found
-    patient_result = await db_session.execute(
-        select(Patient).where(Patient.user_id == user_id).limit(1)
-    )
-    patient = patient_result.scalar_one_or_none()
-    assert patient is None
-
-    # This means status should be set to awaiting_confirmation
-    upload.ingestion_status = "awaiting_confirmation"
-    await db_session.commit()
-
-    assert upload.ingestion_status == "awaiting_confirmation"
+    # Idempotent: a second call returns the same patient, never a duplicate
+    again = await _ensure_patient(db_session, user_id)
+    assert again.id == patient.id
+    all_patients = (
+        await db_session.execute(select(Patient).where(Patient.user_id == user_id))
+    ).scalars().all()
+    assert len(all_patients) == 1
 
 
 @pytest.mark.asyncio

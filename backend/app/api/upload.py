@@ -220,6 +220,7 @@ from app.database import get_db
 from app.dependencies import get_authenticated_user_id
 from app.services.extraction.section_parser import parse_sections, split_large_section
 from app.middleware.audit import log_audit_event
+from app.models.patient import Patient
 from app.models.record import HealthRecord
 from app.models.uploaded_file import UploadedFile
 from app.schemas.upload import (
@@ -524,18 +525,36 @@ async def trigger_extraction(
     triggered = []
     failed = []
 
+    # A 'processing' file is only re-triggerable when it's genuinely STUCK (no
+    # live worker): processing longer than the stuck-recovery timeout, or with
+    # no start time. Re-triggering an ACTIVELY processing file resets it to
+    # pending_extraction, letting the worker re-claim it for a second concurrent
+    # extraction pass (wasted Gemini calls, possible duplicate records).
+    stale_cutoff = datetime.now(timezone.utc) - timedelta(
+        minutes=settings.extraction_timeout_minutes
+    )
+
     for uid in upload_ids:
         upload = uploads.get(uid)
         if not upload:
             failed.append({"upload_id": str(uid), "status": "not_found"})
             continue
-        if upload.ingestion_status not in ("pending_extraction", "processing", "failed", "awaiting_confirmation"):
-            failed.append({"upload_id": str(uid), "status": upload.ingestion_status})
-            continue
 
-        # Set to pending_extraction — the DB-polling worker picks them up automatically
-        if upload.ingestion_status in ("failed", "awaiting_confirmation", "processing"):
+        status_ = upload.ingestion_status
+        if status_ == "processing":
+            started = upload.processing_started_at
+            if started is not None and started > stale_cutoff:
+                # Actively processing — skip to avoid a duplicate concurrent pass.
+                failed.append({"upload_id": str(uid), "status": "processing"})
+                continue
             upload.ingestion_status = "pending_extraction"
+        elif status_ in ("pending_extraction", "failed", "awaiting_confirmation"):
+            # The DB-polling worker picks up pending_extraction automatically.
+            if status_ in ("failed", "awaiting_confirmation"):
+                upload.ingestion_status = "pending_extraction"
+        else:
+            failed.append({"upload_id": str(uid), "status": status_})
+            continue
         triggered.append(upload)
 
     if triggered:
@@ -692,6 +711,26 @@ async def delete_upload(
 
 
 ALLOWED_UNSTRUCTURED = {".pdf", ".rtf", ".tif", ".tiff"}
+
+
+async def _ensure_patient(db: AsyncSession, user_id: UUID) -> Patient:
+    """Return the user's patient, creating a blank placeholder if none exists.
+
+    Unstructured-first users have no Patient row yet; without one the
+    auto-confirm step silently produces zero records and stalls the file at
+    awaiting_confirmation (the "Reimagined" frontend has no manual-confirm UI).
+    A blank patient (no PHI) is a safe placeholder that a later structured
+    upload backfills via ``get_or_create_patient``.
+    """
+    result = await db.execute(
+        select(Patient).where(Patient.user_id == user_id).limit(1)
+    )
+    patient = result.scalar_one_or_none()
+    if patient is None:
+        patient = Patient(user_id=user_id)
+        db.add(patient)
+        await db.flush()  # assign id now; caller commits it with the records
+    return patient
 
 
 async def _process_unstructured(upload_id: UUID, file_path: Path, user_id: UUID) -> None:
@@ -851,16 +890,14 @@ async def _process_unstructured(upload_id: UUID, file_path: Path, user_id: UUID)
             ]
             await db.commit()
 
-            # Step 5: Auto-confirm if patient exists (with encounter linking)
-            from app.models.patient import Patient
+            # Step 5: Auto-confirm. Ensure a patient exists (create a blank
+            # placeholder for unstructured-first users) so extraction always
+            # yields records instead of stalling at awaiting_confirmation.
             from app.services.extraction.entity_to_fhir import entity_to_health_record_dict
 
-            patient_result = await db.execute(
-                select(Patient).where(Patient.user_id == user_id).limit(1)
-            )
-            patient = patient_result.scalar_one_or_none()
+            patient = await _ensure_patient(db, user_id)
 
-            if patient:
+            if patient:  # always true — _ensure_patient never returns None (defensive)
                 from app.services.ingestion.reextraction import soft_delete_prior_extracted
                 replaced = await soft_delete_prior_extracted(db, upload_id)
                 if replaced:
