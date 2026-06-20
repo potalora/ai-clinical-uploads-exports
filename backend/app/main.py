@@ -86,6 +86,30 @@ async def lifespan(app: FastAPI):
         except Exception:
             logger.exception("Clinical LOCATION model warm-load raised at startup")
 
+    # WS-A: warm-load the local clinical-NLP models (scispaCy NER + medspaCy
+    # ConText/sectionizer) only when the local/hybrid engine is selected, so the
+    # default Gemini path never pays the model-load cost. Fail-open, non-latching
+    # like PHI-NER: a missing model degrades the local path gracefully (the
+    # orchestrator falls back / escalates) and never blocks startup.
+    if (settings.extraction_engine or "gemini").lower() in ("local", "hybrid"):
+        try:
+            from app.services.extraction.clinical_context import warm_load_clinical_context
+            from app.services.extraction.local_ner import warm_load_local_ner
+
+            ner_ok = warm_load_local_ner()
+            ctx_ok = warm_load_clinical_context()
+            logger.info(
+                "WS-A local extraction engine=%s warm-load: scispaCy NER=%s, medspaCy=%s",
+                settings.extraction_engine, ner_ok, ctx_ok,
+            )
+            if not (ner_ok and ctx_ok):
+                logger.warning(
+                    "Local extraction models not fully available at startup; "
+                    "the local path will retry per-call and hybrid escalates to Gemini"
+                )
+        except Exception:
+            logger.exception("WS-A local-engine warm-load raised at startup")
+
     # Kick off a NON-BLOCKING, staleness-gated RxNorm medication-index refresh.
     # Fire-and-forget background task: it returns immediately, runs the (rare)
     # rebuild in a worker thread, and fails open — startup is never blocked.
