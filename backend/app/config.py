@@ -80,10 +80,12 @@ class Settings(BaseSettings):
     phi_ner_spacy_model: str = "en_core_web_md"
 
     # --- OSS adoption (flag-gated; see docs/oss-adoption-design.md) ---
-    # WS-A clinical NLP engine. "gemini" = current LangExtract/Gemini path;
-    # "local" = medspaCy + local NER (scispaCy en_ner_bc5cdr_md); "hybrid" =
-    # local fast-path with Gemini escalation for low-confidence spans/sections.
-    extraction_engine: str = "gemini"
+    # WS-A clinical NLP engine (default "hybrid"). "hybrid" = on-device medspaCy +
+    # scispaCy fast-path with Gemini escalation for hard sections; "local" = fully
+    # on-device; "gemini" = cloud LangExtract only. hybrid/local need the optional
+    # ".[clinical-nlp]" stack — if it's absent the pipeline fail-opens to gemini, so
+    # installing the extra IS the opt-in. Off-switch: EXTRACTION_ENGINE=gemini.
+    extraction_engine: str = "hybrid"
     # WS-A: spans/sections below this confidence escalate to Gemini (hybrid).
     extraction_local_confidence_threshold: float = 0.6
     # WS-C: high-threshold RapidFuzz fallback for terminology lookups. Default ON
