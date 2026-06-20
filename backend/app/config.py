@@ -79,6 +79,26 @@ class Settings(BaseSettings):
     phi_ner_enabled: bool = True
     phi_ner_spacy_model: str = "en_core_web_md"
 
+    # --- OSS adoption (flag-gated; see docs/oss-adoption-design.md) ---
+    # WS-A clinical NLP engine. "gemini" = current LangExtract/Gemini path;
+    # "local" = medspaCy + local NER (scispaCy en_ner_bc5cdr_md); "hybrid" =
+    # local fast-path with Gemini escalation for low-confidence spans/sections.
+    extraction_engine: str = "gemini"
+    # WS-A: spans/sections below this confidence escalate to Gemini (hybrid).
+    extraction_local_confidence_threshold: float = 0.6
+    # WS-B PHI engine. "legacy" = hand-rolled regex+NER layers; "presidio" =
+    # Microsoft Presidio analyzer with re-homed known-identity + eponym layers.
+    phi_engine: str = "legacy"
+    # WS-B: clinical LOCATION de-id pass (closes the city Safe Harbor gap) via a
+    # clinical model. Fails open, non-latching, warm-loaded. Off until validated.
+    phi_location_ner_enabled: bool = False
+    # WS-C: high-threshold RapidFuzz fallback for terminology lookups. Off until
+    # the cutoff is validated to preserve "never emit a wrong code".
+    terminology_fuzzy_enabled: bool = False
+    # WS-D FHIR structural validation. "off" | "log" (drift signal, never blocks
+    # ingestion; default) | "strict" (never applied to AI-built partial resources).
+    fhir_validation: str = "log"
+
     # Redis
     redis_url: str = "redis://localhost:6379/0"
 
