@@ -329,3 +329,45 @@ async def test_within_document_dedup_collapses_repeats():
         gemini_section_extract=None, confidence_threshold=0.6,
     )
     assert len([e for e in result.entities if e.text == "metformin"]) == 1
+
+
+# --- WS-A "not install and use": engine resolution / opt-in fallback ----------
+from app.api.upload import _resolve_extraction_engine  # noqa: E402
+
+
+def test_resolve_engine_gemini_passthrough():
+    assert _resolve_extraction_engine("gemini") == "gemini"
+    assert _resolve_extraction_engine(None) == "gemini"
+    assert _resolve_extraction_engine("GEMINI") == "gemini"
+
+
+def test_resolve_engine_falls_back_when_models_unavailable(monkeypatch):
+    """local/hybrid degrade to gemini when the optional clinical-NLP stack is
+    absent (warm_load -> False) — so the flag is safe to set without installing."""
+    class _Unavailable:
+        def warm_load(self):
+            return False
+
+    monkeypatch.setattr(
+        "app.services.extraction.local_ner.get_local_ner", lambda: _Unavailable()
+    )
+    monkeypatch.setattr(
+        "app.services.extraction.clinical_context.get_clinical_context", lambda: _Unavailable()
+    )
+    assert _resolve_extraction_engine("hybrid") == "gemini"
+    assert _resolve_extraction_engine("local") == "gemini"
+
+
+def test_resolve_engine_uses_local_when_models_available(monkeypatch):
+    class _Ready:
+        def warm_load(self):
+            return True
+
+    monkeypatch.setattr(
+        "app.services.extraction.local_ner.get_local_ner", lambda: _Ready()
+    )
+    monkeypatch.setattr(
+        "app.services.extraction.clinical_context.get_clinical_context", lambda: _Ready()
+    )
+    assert _resolve_extraction_engine("hybrid") == "hybrid"
+    assert _resolve_extraction_engine("local") == "local"

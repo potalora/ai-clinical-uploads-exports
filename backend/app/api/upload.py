@@ -998,6 +998,36 @@ async def _run_gemini_extraction_engine(db, upload, upload_id, user_id, text, se
     return all_entities, parsed_doc
 
 
+def _resolve_extraction_engine(requested: str | None) -> str:
+    """Resolve the effective extraction engine, degrading ``local``/``hybrid`` to
+    ``gemini`` when the OPTIONAL clinical-NLP stack (scispaCy + medspaCy + the NER
+    model — the ``.[clinical-nlp]`` extra) isn't installed/available.
+
+    This is what makes the local path strictly opt-in: the flag can be set without
+    the deps present ("not install and use") and extraction still works via Gemini
+    rather than crashing or under-extracting. Pure decision logic (no I/O beyond
+    the cached model probe) so it is unit-testable.
+    """
+    engine = (requested or "gemini").lower()
+    if engine not in ("local", "hybrid"):
+        return "gemini"
+    try:
+        from app.services.extraction.clinical_context import get_clinical_context
+        from app.services.extraction.local_ner import get_local_ner
+
+        if get_local_ner().warm_load() and get_clinical_context().warm_load():
+            return engine
+    except Exception:  # noqa: BLE001 - missing deps must never break extraction
+        pass
+    logger.warning(
+        "EXTRACTION_ENGINE=%s but the local clinical-NLP models/deps are "
+        "unavailable; falling back to the Gemini engine. Enable the on-device path "
+        'with `pip install -e ".[clinical-nlp]"` plus the scispaCy model.',
+        engine,
+    )
+    return "gemini"
+
+
 async def _run_local_extraction_engine(db, upload, upload_id, user_id, text, engine, sem):
     """WS-A engine: on-device medspaCy + scispaCy fast-path (``local``/``hybrid``).
 
@@ -1233,7 +1263,8 @@ async def _process_unstructured(upload_id: UUID, file_path: Path, user_id: UUID)
             # runs the LangExtract/Gemini path below unchanged. "local"/"hybrid"
             # run the on-device medspaCy + scispaCy fast-path, escalating only
             # hard sections to Gemini (hybrid). Flag default-OFF until validated.
-            engine = (settings.extraction_engine or "gemini").lower()
+            engine = _resolve_extraction_engine(settings.extraction_engine)
+
             if engine in ("local", "hybrid"):
                 local_out = await _run_local_extraction_engine(
                     db, upload, upload_id, user_id, text, engine, sem
