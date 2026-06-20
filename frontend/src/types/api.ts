@@ -49,6 +49,24 @@ export interface RecordListResponse {
   page_size: number;
 }
 
+export interface TimelineGauge {
+  value: number;
+  low: number;
+  high: number;
+}
+
+// Compact, server-computed scalar preview for a timeline row (see
+// backend services/timeline_preview.py). `emphasis` is a NEUTRAL visual
+// token only ("normal" | "notable" | "muted") — never good/bad coloring.
+export interface TimelinePreview {
+  value: string | null;
+  unit: string | null;
+  flag: string | null;
+  emphasis: "normal" | "notable" | "muted" | null;
+  gauge: TimelineGauge | null;
+  facets: string[];
+}
+
 export interface TimelineEvent {
   id: string;
   record_type: string;
@@ -60,6 +78,8 @@ export interface TimelineEvent {
   // fhir_resource (Encounter.participant / Observation.performer /
   // Procedure.performer). Null when the record carries none.
   provider?: string | null;
+  // Scalar preview rendered inline in the row; null when nothing to surface.
+  preview?: TimelinePreview | null;
 }
 
 export interface TimelineResponse {

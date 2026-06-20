@@ -462,6 +462,20 @@
 .tl-date { font-family: var(--font-mono), monospace; font-size: 12px; color: var(--text-muted); white-space: nowrap; flex-shrink: 0; text-align: right; }
 .tl-val { font-family: var(--font-mono), monospace; font-size: 14px; font-weight: 600; margin-top: 6px; color: var(--text); }
 
+/* metric strip - inline scalar preview (value, flag, gauge, facets). Neutral
+   framing only: notable = out-of-range accent (theme sienna), never red/green. */
+.tl-ms { display: flex; flex-direction: column; gap: 6px; margin-top: 7px; }
+.tl-ms-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.tl-ms-val { font-family: var(--font-mono), monospace; font-size: 14px; font-weight: 600; color: var(--text); }
+.tl-ms-unit { font-weight: 400; color: var(--text-muted); }
+.tl-ms-flag { font-size: 10px; padding: 2px 9px; }
+.tl-ms-flag[data-emphasis="notable"] { color: var(--theme-sienna); }
+.tl-ms-flag[data-emphasis="muted"] { color: var(--text-muted); opacity: 0.9; }
+.tl-ms-facet { font-family: var(--font-mono), monospace; font-size: 11px; color: var(--text-muted); padding: 2px 8px; border-radius: var(--radius-pill); background: var(--bg-2); }
+.tl-ms-gauge { max-width: 260px; }
+.tl-ms-gauge .gauge { margin-top: 2px; }
+.tl-ms-gauge .gauge-sc { margin-top: 5px; }
+
 /* filters */
 .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 26px; }
 .filt { appearance: none; cursor: pointer; font-family: var(--font-body), sans-serif; font-size: 13px; font-weight: 600; letter-spacing: 0; text-transform: capitalize; padding: 7px 13px; border-radius: var(--radius-pill); background: var(--card); border: 1px solid var(--border); color: var(--text-dim); transition: all 0.16s; }

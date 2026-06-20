@@ -8,6 +8,7 @@ import { RECORD_TYPE_COLORS, DEFAULT_RECORD_COLOR } from "@/lib/constants";
 import { RetroBadge } from "@/components/retro/RetroBadge";
 import { RetroLoadingState } from "@/components/retro/RetroLoadingState";
 import { RecordDetailSheet } from "@/components/retro/RecordDetailSheet";
+import { TimelineMetricStrip } from "@/components/retro/TimelineMetricStrip";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -164,6 +165,7 @@ export default function TimelinePage() {
                           <span className="tl-title">{r.display_text}</span>
                         </span>
                         {r.code_display && <span className="tl-sub">{r.code_display}</span>}
+                        <TimelineMetricStrip preview={r.preview} />
                         {r.provider && (
                           <span
                             className="tl-sub tl-provider"
