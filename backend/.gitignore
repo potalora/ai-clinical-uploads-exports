@@ -3,3 +3,7 @@ backend/tools/
 # WS-E: Synthea-generated FHIR fixtures (synthetic, but large — regenerate via scripts/generate_synthea_fixtures.py)
 backend/tests/fixtures/synthea/
 tests/fixtures/synthea/
+
+# Per-workstream agent venvs (isolated; never commit)
+backend/.venv-ws*
+.venv-ws*
