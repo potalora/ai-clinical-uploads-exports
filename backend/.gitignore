@@ -7,3 +7,4 @@ tests/fixtures/synthea/
 # Per-workstream agent venvs (isolated; never commit)
 backend/.venv-ws*
 .venv-ws*
+tools/
