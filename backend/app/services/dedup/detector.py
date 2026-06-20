@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
+from rapidfuzz import fuzz
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -309,17 +310,15 @@ def _compare_records(a: HealthRecord, b: HealthRecord) -> tuple[float, dict]:
 
 
 def _fuzzy_match(a: str, b: str) -> float:
-    """Simple fuzzy string matching using character overlap."""
-    a_lower = a.lower()
-    b_lower = b.lower()
-    if a_lower == b_lower:
-        return 1.0
+    """Token-set string similarity in ``[0, 1]`` via RapidFuzz.
 
-    # Use set intersection for quick similarity
-    set_a = set(a_lower.split())
-    set_b = set(b_lower.split())
-    if not set_a or not set_b:
-        return 0.0
-    intersection = set_a & set_b
-    union = set_a | set_b
-    return len(intersection) / len(union) if union else 0.0
+    Replaces a homemade Jaccard word-overlap with
+    ``rapidfuzz.fuzz.token_set_ratio``, which is order-insensitive and tolerant
+    of extra/split tokens (e.g. a reordered, split dose: "Metformin 500mg tablet"
+    vs "metformin tablet 500 mg"). Inputs are lower-cased so matching stays
+    case-insensitive — the exact-match branch in :func:`_compare_records` already
+    handles case-identical text before this is reached. The additive-weight
+    scoring and integer-percent banding in :func:`_compare_records` are unchanged;
+    this only swaps how the ``> 0.8`` ``text_fuzzy_match`` gate is computed.
+    """
+    return fuzz.token_set_ratio(a.lower(), b.lower()) / 100.0
