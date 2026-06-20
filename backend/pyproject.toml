@@ -45,10 +45,14 @@ dependencies = [
 # (PyTorch + a transformer de-id model) — install only when enabling the location pass:
 #   pip install -e ".[phi-location]"
 phi-location = ["torch>=2.2", "transformers>=4.40"]
-# WS-A: local clinical NLP (EXTRACTION_ENGINE=local|hybrid; default gemini). Heavy,
-# and scispaCy pins spaCy to ~3.7.5 — install in a dedicated env, then add the model:
-#   pip install -e ".[clinical-nlp]" && pip install <en_ner_bc5cdr_md release URL>
-clinical-nlp = ["scispacy>=0.5", "medspacy>=1.0"]
+# WS-A: local clinical NLP (EXTRACTION_ENGINE=local|hybrid; default gemini).
+# Versions PINNED to the validated, mutually-resolvable set (a naive `>=` resolve
+# backtracks medspaCy to a broken-sdist build). spaCy==3.7.5 is scispaCy's ceiling
+# and co-resolves with presidio (phi-location) — so clinical-nlp + phi-location can
+# share ONE interpreter. After install, add the model + matching spaCy model:
+#   pip install -e ".[clinical-nlp]" && pip install <en_ner_bc5cdr_md 0.5.4 URL> \
+#     && python -m spacy download en_core_web_md  # (3.7.x to match spaCy 3.7.5)
+clinical-nlp = ["scispacy==0.6.2", "medspacy==1.3.1", "spacy==3.7.5"]
 
 [dependency-groups]
 dev = [
