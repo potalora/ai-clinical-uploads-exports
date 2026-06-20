@@ -92,9 +92,12 @@ class Settings(BaseSettings):
     # WS-B: clinical LOCATION de-id pass (closes the city Safe Harbor gap) via a
     # clinical model. Fails open, non-latching, warm-loaded. Off until validated.
     phi_location_ner_enabled: bool = False
-    # WS-C: high-threshold RapidFuzz fallback for terminology lookups. Off until
-    # the cutoff is validated to preserve "never emit a wrong code".
-    terminology_fuzzy_enabled: bool = False
+    # WS-C: high-threshold RapidFuzz fallback for terminology lookups. Default ON
+    # — fires only after exact/token lookups miss, and requires BOTH token_set_ratio
+    # AND char-level ratio >= 88 (subset-inflation guard) so a near-miss of nothing
+    # known stays uncoded. Preserves "never emit a wrong code"; only adds codes to
+    # misspellings of known terms. Validated on the real bundled indexes + real data.
+    terminology_fuzzy_enabled: bool = True
     # WS-D FHIR structural validation. "off" | "log" (drift signal, never blocks
     # ingestion; default) | "strict" (never applied to AI-built partial resources).
     fhir_validation: str = "log"
