@@ -11,7 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.patient import Patient
 from app.models.record import HealthRecord
-from app.services.ai.llm import LLMMessage, LLMRequest, ReasoningConfig, get_provider
+from app.services.ai.llm import (
+    LLMConfig,
+    LLMMessage,
+    LLMRequest,
+    ReasoningConfig,
+    get_provider,
+    load_llm_config,
+)
 from app.services.ai.patient_phi import patient_scrub_args
 from app.services.ai.phi_scrubber import scrub_phi
 from app.services.ai.prompt_builder import _format_record
@@ -157,8 +164,15 @@ The following de-identified health records are provided for summarization:
 
 Please provide a structured summary following the rules in the system prompt."""
 
-    # Resolve provider: explicit arg overrides the routed summary provider.
-    llm = get_provider("summary") if provider is None else _provider_by_name(provider)
+    # Resolve the per-user LLM config (falls back to .env when the user has no
+    # saved rows), then the provider: an explicit ``provider`` arg overrides the
+    # routed summary provider for this call.
+    config = await load_llm_config(db, user_id)
+    llm = (
+        get_provider("summary", config)
+        if provider is None
+        else _provider_by_name(provider, config)
+    )
 
     request = LLMRequest(
         messages=[LLMMessage("user", user_prompt)],
@@ -210,14 +224,18 @@ Please provide a structured summary following the rules in the system prompt."""
     }
 
 
-def _provider_by_name(name: str):
-    """Build a one-off provider for an explicit per-request override."""
+def _provider_by_name(name: str, config: LLMConfig | None = None):
+    """Build a one-off provider for an explicit per-request override.
+
+    ``config`` carries the per-user resolved credentials/routing; when ``None``
+    the registry falls back to the global ``.env`` config (back-compat).
+    """
     from app.services.ai.llm.registry import KNOWN_PROVIDERS, _build
     from app.services.ai.llm.types import LLMBadRequestError
 
     if name not in KNOWN_PROVIDERS:
         raise LLMBadRequestError(f"Unknown provider: {name!r}")
-    return _build(name)
+    return _build(name, config)
 
 
 def _get_system_prompt(output_format: str) -> str:

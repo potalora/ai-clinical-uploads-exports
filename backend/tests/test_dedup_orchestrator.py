@@ -224,6 +224,10 @@ class TestRunUploadDedup:
     async def test_no_candidates_returns_empty_summary(self):
         mock_db = AsyncMock()
         with patch(
+            "app.services.dedup.orchestrator.load_llm_config",
+            new_callable=AsyncMock,
+            return_value=None,
+        ), patch(
             "app.services.dedup.orchestrator.detect_upload_duplicates",
             new_callable=AsyncMock,
             return_value=([], []),
@@ -245,6 +249,10 @@ class TestRunUploadDedup:
         ]
 
         with patch(
+            "app.services.dedup.orchestrator.load_llm_config",
+            new_callable=AsyncMock,
+            return_value=None,
+        ), patch(
             "app.services.dedup.orchestrator.detect_upload_duplicates",
             new_callable=AsyncMock,
             return_value=(auto_candidates, []),
@@ -274,6 +282,10 @@ class TestRunUploadDedup:
         mock_judgment.field_diff = {"dosageInstruction": {"old": "500mg", "new": "1000mg"}}
 
         with patch(
+            "app.services.dedup.orchestrator.load_llm_config",
+            new_callable=AsyncMock,
+            return_value=None,
+        ), patch(
             "app.services.dedup.orchestrator.detect_upload_duplicates",
             new_callable=AsyncMock,
             return_value=([], fuzzy_candidates),
@@ -306,6 +318,10 @@ class TestRunUploadDedup:
         mock_judgment.field_diff = None
 
         with patch(
+            "app.services.dedup.orchestrator.load_llm_config",
+            new_callable=AsyncMock,
+            return_value=None,
+        ), patch(
             "app.services.dedup.orchestrator.detect_upload_duplicates",
             new_callable=AsyncMock,
             return_value=([], fuzzy_candidates),
@@ -342,6 +358,10 @@ class TestRunUploadDedup:
         mock_judgment.field_diff = None
 
         with patch(
+            "app.services.dedup.orchestrator.load_llm_config",
+            new_callable=AsyncMock,
+            return_value=None,
+        ), patch(
             "app.services.dedup.orchestrator.detect_upload_duplicates",
             new_callable=AsyncMock,
             return_value=([], fuzzy_candidates),
