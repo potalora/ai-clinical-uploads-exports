@@ -92,8 +92,15 @@ function resetIdleTimer() {
   if (typeof window === "undefined") return;
   if (idleTimer) clearTimeout(idleTimer);
   idleTimer = setTimeout(() => {
-    localStorage.removeItem("medtimeline-auth");
-    window.location.href = "/login";
+    // Revoke the session server-side (best-effort) before clearing local state,
+    // so an idle logout doesn't leave the refresh token usable for 7 days.
+    void api
+      .logout()
+      .catch(() => {})
+      .finally(() => {
+        localStorage.removeItem("medtimeline-auth");
+        window.location.href = "/login";
+      });
   }, IDLE_TIMEOUT_MS);
 }
 
@@ -179,6 +186,22 @@ class ApiClient {
       body: body ? JSON.stringify(body) : undefined,
       token,
     });
+  }
+
+  /**
+   * Log out, revoking BOTH tokens server-side. The refresh token is sent in the
+   * body so the server can blacklist it — otherwise the 7-day refresh token would
+   * stay valid after "logout" (SEC-AUTH-02). Best-effort: callers still clear
+   * local state if this throws.
+   */
+  async logout(): Promise<void> {
+    const refreshToken = getRefreshToken();
+    const accessToken = getToken();
+    await this.post<void>(
+      "/auth/logout",
+      refreshToken ? { refresh_token: refreshToken } : undefined,
+      accessToken ?? undefined
+    );
   }
 
   async put<T>(endpoint: string, body?: unknown, token?: string): Promise<T> {
