@@ -4,7 +4,7 @@ import json
 import logging
 from collections.abc import Callable
 
-from app.services.ai.llm import LLMMessage, LLMRequest, get_provider
+from app.services.ai.llm import LLMConfig, LLMMessage, LLMRequest, get_provider
 from app.services.extraction.clinical_examples import CLINICAL_EXTRACTION_PROMPT
 from app.services.extraction.entity_extractor import ExtractedEntity, ExtractionResult
 
@@ -23,9 +23,14 @@ async def generic_extract_entities_async(
     text: str,
     source_file: str,
     progress_callback: Callable[[str, int, int], None] | None = None,
+    config: LLMConfig | None = None,
 ) -> ExtractionResult:
-    """Provider-agnostic clinical entity extraction via JSON-mode completion."""
-    llm = get_provider("extraction")
+    """Provider-agnostic clinical entity extraction via JSON-mode completion.
+
+    ``config`` carries the per-user resolved routing/credentials; when ``None``
+    the global ``.env`` config is used (back-compat).
+    """
+    llm = get_provider("extraction", config or LLMConfig.from_settings())
     prompt = f"{CLINICAL_EXTRACTION_PROMPT}\n{_SCHEMA_HINT}\n\nTEXT:\n{text}"
     try:
         resp = await llm.complete(

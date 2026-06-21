@@ -5,6 +5,7 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import langextract as lx
 
@@ -13,6 +14,9 @@ from app.services.extraction.clinical_examples import (
     CLINICAL_EXAMPLES,
     CLINICAL_EXTRACTION_PROMPT,
 )
+
+if TYPE_CHECKING:
+    from app.services.ai.llm import LLMConfig
 
 logger = logging.getLogger(__name__)
 
@@ -142,17 +146,19 @@ async def extract_entities_async(
     source_file: str,
     api_key: str,
     progress_callback: Callable[[str, int, int], None] | None = None,
+    config: LLMConfig | None = None,
 ) -> ExtractionResult:
     """Async entity extraction.
 
-    Gemini/Vertex route through the synchronous LangExtract call (as today);
-    any other configured LLM provider delegates to the provider-agnostic JSON
-    extraction path. ``provider_name_for`` is imported lazily to avoid an import
-    cycle with the LLM registry.
+    Gemini/Vertex route through the synchronous LangExtract call (as today, still
+    keyed by ``api_key``); any other configured LLM provider delegates to the
+    provider-agnostic JSON extraction path. ``config`` carries the per-user
+    resolved routing/credentials (``None`` => global ``.env``). ``provider_name_for``
+    is imported lazily to avoid an import cycle with the LLM registry.
     """
     from app.services.ai.llm.registry import provider_name_for
 
-    if provider_name_for("extraction") in ("gemini", "vertex"):
+    if provider_name_for("extraction", config) in ("gemini", "vertex"):
         return await asyncio.to_thread(
             extract_entities, text, source_file, api_key, progress_callback
         )
@@ -160,4 +166,6 @@ async def extract_entities_async(
         generic_extract_entities_async,
     )
 
-    return await generic_extract_entities_async(text, source_file, progress_callback)
+    return await generic_extract_entities_async(
+        text, source_file, progress_callback, config=config
+    )

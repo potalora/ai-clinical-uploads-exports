@@ -5,7 +5,7 @@ import json
 import logging
 from dataclasses import dataclass
 
-from app.services.ai.llm import LLMMessage, LLMRequest, get_provider
+from app.services.ai.llm import LLMConfig, LLMMessage, LLMRequest, get_provider
 
 logger = logging.getLogger(__name__)
 
@@ -87,16 +87,19 @@ async def judge_candidate_pair(
     fhir_b: dict,
     record_type: str,
     api_key: str,
+    config: LLMConfig | None = None,
 ) -> JudgmentResult:
     """Judge a single candidate pair using the configured LLM provider.
 
-    Routing goes through ``get_provider("dedup")``. ``api_key`` is retained for
-    caller compatibility but is no longer used directly (provider credentials
-    come from config). Returns a JudgmentResult. On failure, returns a safe
-    fallback that flags the pair for manual review.
+    Routing goes through ``get_provider("dedup", config)``. ``api_key`` is retained
+    for caller compatibility but is no longer used directly (provider credentials
+    come from config). ``config`` carries the per-user resolved routing/credentials;
+    when ``None`` the global ``.env`` config is used (back-compat). Returns a
+    JudgmentResult. On failure, returns a safe fallback that flags the pair for
+    manual review.
     """
     try:
-        llm = get_provider("dedup")
+        llm = get_provider("dedup", config or LLMConfig.from_settings())
         content = (
             f"{_JUDGE_PROMPT}\n\n"
             f"Record type: {record_type}\n\n"
@@ -123,17 +126,21 @@ async def judge_candidates_batch(
     pairs: list[tuple[dict, dict, str]],
     api_key: str,
     max_concurrent: int = 3,
+    config: LLMConfig | None = None,
 ) -> list[JudgmentResult]:
     """Judge multiple candidate pairs with bounded concurrency.
 
-    Each entry in pairs is (fhir_a, fhir_b, record_type).
-    Returns results in the same order as input pairs.
+    Each entry in pairs is (fhir_a, fhir_b, record_type). ``config`` carries the
+    per-user resolved routing/credentials, threaded into each pair judgment
+    (``None`` => global ``.env``). Returns results in the same order as input pairs.
     """
     sem = asyncio.Semaphore(max_concurrent)
 
     async def _judge_with_sem(fhir_a: dict, fhir_b: dict, record_type: str) -> JudgmentResult:
         async with sem:
-            return await judge_candidate_pair(fhir_a, fhir_b, record_type, api_key)
+            return await judge_candidate_pair(
+                fhir_a, fhir_b, record_type, api_key, config=config
+            )
 
     tasks = [_judge_with_sem(a, b, rt) for a, b, rt in pairs]
     return await asyncio.gather(*tasks)

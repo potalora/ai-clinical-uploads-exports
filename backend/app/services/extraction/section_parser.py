@@ -8,7 +8,7 @@ from enum import Enum
 from pydantic import BaseModel
 
 from app.config import settings
-from app.services.ai.llm import LLMMessage, LLMRequest, get_provider
+from app.services.ai.llm import LLMConfig, LLMMessage, LLMRequest, get_provider
 
 logger = logging.getLogger(__name__)
 
@@ -128,13 +128,16 @@ def resolve_sections(text: str, raw_sections: list[dict]) -> list[ParsedSection]
     return sections
 
 
-async def parse_sections(text: str, api_key: str) -> ParsedDocument:
+async def parse_sections(
+    text: str, api_key: str, config: LLMConfig | None = None
+) -> ParsedDocument:
     """Parse a clinical document into logical sections via the LLM facade.
 
     The ``api_key`` parameter is retained for backward compatibility with existing
     callers but is no longer used internally: provider selection and credentials are
-    resolved by ``get_provider`` from configuration (``LLM_PROVIDER`` / per-operation
-    overrides). Falls back to a single OTHER section if the LLM call fails.
+    resolved by ``get_provider`` from configuration. ``config`` carries the per-user
+    resolved routing/credentials; when ``None`` the global ``.env`` config is used
+    (back-compat). Falls back to a single OTHER section if the LLM call fails.
     """
     if not text or len(text.strip()) < 10:
         return ParsedDocument(
@@ -146,7 +149,7 @@ async def parse_sections(text: str, api_key: str) -> ParsedDocument:
         )
 
     try:
-        llm_response = await _call_llm_for_sections(text)
+        llm_response = await _call_llm_for_sections(text, config)
     except Exception:
         logger.exception("Section parsing failed, falling back to single section")
         return ParsedDocument(
@@ -180,15 +183,16 @@ async def parse_sections(text: str, api_key: str) -> ParsedDocument:
     )
 
 
-async def _call_llm_for_sections(text: str) -> dict:
+async def _call_llm_for_sections(text: str, config: LLMConfig | None = None) -> dict:
     """Parse document sections (type + verbatim anchor only) via the LLM facade.
 
-    Routes through ``get_provider("section")`` so any configured provider (Gemini by
-    default) handles the call. The Gemini provider forwards ``json_schema`` to its
-    ``response_schema``; other providers ignore it and rely on JSON-object mode. Both
-    yield parseable JSON.
+    Routes through ``get_provider("section", config)`` so the user's configured
+    provider (Gemini by default) handles the call; ``config`` falls back to the
+    global ``.env`` config when ``None``. The Gemini provider forwards
+    ``json_schema`` to its ``response_schema``; other providers ignore it and rely
+    on JSON-object mode. Both yield parseable JSON.
     """
-    llm = get_provider("section")
+    llm = get_provider("section", config or LLMConfig.from_settings())
     request = LLMRequest(
         messages=[
             LLMMessage(

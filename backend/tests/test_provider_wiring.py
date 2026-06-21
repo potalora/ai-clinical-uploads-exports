@@ -129,7 +129,7 @@ async def test_auto_confirm_attaches_document_provider(db_session: AsyncSession)
     engine = create_async_engine(TEST_DB_URL)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-    async def fake_extract(text, source_file, api_key, progress_callback=None):
+    async def fake_extract(text, source_file, api_key, progress_callback=None, config=None):
         return ExtractionResult(
             source_file=source_file,
             source_text=text,

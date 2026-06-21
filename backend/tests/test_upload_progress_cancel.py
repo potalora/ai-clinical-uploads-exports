@@ -344,7 +344,7 @@ async def test_worker_writes_section_progress(db_session: AsyncSession):
 
     seen_stage: dict[str, str | None] = {}
 
-    async def fake_extract(text, source_file, api_key, progress_callback=None):
+    async def fake_extract(text, source_file, api_key, progress_callback=None, config=None):
         # Capture the DB stage at the moment entity extraction runs.
         async with factory() as s:
             row = (

@@ -873,11 +873,16 @@ async def _run_gemini_extraction_engine(db, upload, upload_id, user_id, text, se
     pre-WS-A behavior, lifted verbatim into a helper so the engine branch can
     select it without changing the default path.
     """
+    from app.services.ai.llm import load_llm_config
     from app.services.extraction.entity_extractor import extract_entities_async
     from app.services.ai.phi_scrubber import scrub_phi
     from app.services.ai.patient_phi import patient_scrub_args
     from app.models.patient import Patient
     from app.services.extraction.section_parser import ParsedDocument, ParsedSection, SectionType
+
+    # Resolve the user's LLM config once for this run (provider routing/creds for
+    # both section parsing and per-section entity extraction). Falls back to .env.
+    config = await load_llm_config(db, user_id)
 
     # Step 2: Scrub PHI before entity extraction — local, no semaphore.
     patients = (
@@ -901,7 +906,9 @@ async def _run_gemini_extraction_engine(db, upload, upload_id, user_id, text, se
         )
     else:
         async with sem:
-            parsed_doc = await parse_sections(scrubbed_text, settings.gemini_api_key)
+            parsed_doc = await parse_sections(
+                scrubbed_text, settings.gemini_api_key, config=config
+            )
 
     upload.extraction_sections = {
         "sections": [
@@ -952,7 +959,7 @@ async def _run_gemini_extraction_engine(db, upload, upload_id, user_id, text, se
         async with section_sem:
             async with sem:
                 chunk_result = await extract_entities_async(
-                    text_chunk, upload.filename, settings.gemini_api_key
+                    text_chunk, upload.filename, settings.gemini_api_key, config=config
                 )
         return chunk_result, section_type
 
@@ -1036,6 +1043,7 @@ async def _run_local_extraction_engine(db, upload, upload_id, user_id, text, eng
     and only the escalated section text is scrubbed before that call. Returns
     ``(all_entities, parsed_doc)`` or ``None`` if cancelled.
     """
+    from app.services.ai.llm import load_llm_config
     from app.services.ai.phi_scrubber import scrub_phi
     from app.services.ai.patient_phi import patient_scrub_args
     from app.services.extraction.entity_extractor import extract_entities_async
@@ -1045,6 +1053,10 @@ async def _run_local_extraction_engine(db, upload, upload_id, user_id, text, eng
     from app.services.extraction.clinical_context import get_clinical_context
     from app.services.extraction.section_parser import ParsedDocument
     from app.models.patient import Patient
+
+    # Resolve the user's LLM config once; used by the hybrid Gemini escalation
+    # path below. Falls back to .env when the user has no saved rows.
+    config = await load_llm_config(db, user_id)
 
     patients = (
         await db.execute(select(Patient).where(Patient.user_id == user_id))
@@ -1057,7 +1069,9 @@ async def _run_local_extraction_engine(db, upload, upload_id, user_id, text, eng
         out: list = []
         for chunk in split_large_section(scrubbed):
             async with sem:
-                res = await extract_entities_async(chunk, upload.filename, settings.gemini_api_key)
+                res = await extract_entities_async(
+                    chunk, upload.filename, settings.gemini_api_key, config=config
+                )
             if res.entities:
                 out.extend(res.entities)
         return validate_entities(out)

@@ -12,6 +12,7 @@ from app.config import settings
 from app.models.deduplication import DedupCandidate
 from app.models.provenance import Provenance
 from app.models.record import HealthRecord
+from app.services.ai.llm import LLMConfig, load_llm_config
 from app.services.dedup.detector import detect_upload_duplicates
 from app.services.dedup.llm_judge import judge_candidates_batch, JudgmentResult
 
@@ -54,6 +55,10 @@ async def run_upload_dedup(
     """
     summary = DedupSummary()
 
+    # Resolve the per-user LLM config once for this upload's dedup run (falls back
+    # to .env when the user has no saved rows). Threaded into the LLM judge.
+    config = await load_llm_config(db, user_id)
+
     # Step 1: Heuristic filter
     auto_merged_candidates, needs_llm_candidates = await detect_upload_duplicates(
         db, upload_id, patient_id, user_id
@@ -76,7 +81,7 @@ async def run_upload_dedup(
 
     # Step 3: LLM judge on fuzzy matches
     if needs_llm_candidates:
-        judgments = await _run_llm_judge(db, needs_llm_candidates)
+        judgments = await _run_llm_judge(db, needs_llm_candidates, config)
 
         llm_auto_merge = []
         llm_dismissed = []
@@ -181,8 +186,13 @@ async def _apply_auto_merges(
 async def _run_llm_judge(
     db: AsyncSession,
     candidates: list[dict],
+    config: LLMConfig | None = None,
 ) -> list[JudgmentResult]:
-    """Fetch FHIR resources and run LLM judge on candidate pairs."""
+    """Fetch FHIR resources and run LLM judge on candidate pairs.
+
+    ``config`` carries the per-user resolved routing/credentials, threaded into
+    the batch judge (``None`` => global ``.env``).
+    """
     pairs = []
     for c in candidates:
         rec_a = await db.get(HealthRecord, c["record_a_id"])
@@ -196,4 +206,4 @@ async def _run_llm_judge(
         else:
             pairs.append(({}, {}, "unknown"))
 
-    return await judge_candidates_batch(pairs, settings.gemini_api_key)
+    return await judge_candidates_batch(pairs, settings.gemini_api_key, config=config)
