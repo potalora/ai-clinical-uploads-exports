@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import logging
 
 from openai import (
@@ -14,19 +15,66 @@ from openai import (
 from app.services.ai.llm.base import LLMProvider
 from app.services.ai.llm.types import (
     Capabilities,
+    DocumentPart,
+    ImagePart,
     LLMAuthError,
     LLMBadRequestError,
     LLMError,
+    LLMMessage,
     LLMRateLimitError,
     LLMRequest,
     LLMResponse,
     LLMResponseError,
     LLMTimeoutError,
     LLMUsage,
+    TextPart,
+    as_parts,
 )
 
 logger = logging.getLogger(__name__)
 _FINISH = {"stop": "stop", "length": "length", "content_filter": "content_filter"}
+
+
+def _build_content(message: LLMMessage) -> str | list[dict]:
+    """Map a message's content to the OpenAI chat shape.
+
+    All-text content (a plain ``str`` or a single ``TextPart``) stays a plain
+    string so text-only calls are byte-identical to today's behavior. Image and
+    document parts produce the multimodal array shape.
+
+    Args:
+        message: The message whose content is mapped.
+
+    Returns:
+        A plain string for all-text content, else a list of content-part dicts.
+    """
+    parts = as_parts(message.content)
+    if len(parts) == 1 and isinstance(parts[0], TextPart):
+        return parts[0].text
+    content: list[dict] = []
+    for part in parts:
+        if isinstance(part, TextPart):
+            content.append({"type": "text", "text": part.text})
+        elif isinstance(part, ImagePart):
+            b64 = base64.standard_b64encode(part.data).decode()
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{part.mime};base64,{b64}"},
+                }
+            )
+        elif isinstance(part, DocumentPart):
+            b64 = base64.standard_b64encode(part.data).decode()
+            content.append(
+                {
+                    "type": "file",
+                    "file": {
+                        "filename": "document.pdf",
+                        "file_data": f"data:application/pdf;base64,{b64}",
+                    },
+                }
+            )
+    return content
 
 
 class OpenAICompatProvider(LLMProvider):
@@ -65,7 +113,9 @@ class OpenAICompatProvider(LLMProvider):
         messages: list[dict] = []
         if request.system:
             messages.append({"role": "system", "content": request.system})
-        messages.extend({"role": m.role, "content": m.content} for m in request.messages)
+        messages.extend(
+            {"role": m.role, "content": _build_content(m)} for m in request.messages
+        )
         kwargs: dict = {
             "model": request.model or self._model_default,
             "messages": messages,

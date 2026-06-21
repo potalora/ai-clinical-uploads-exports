@@ -6,7 +6,7 @@ from app.services.ai.llm.base import LLMProvider
 from app.services.ai.llm.types import (
     Capabilities, LLMAuthError, LLMError, LLMProviderUnavailableError,
     LLMRateLimitError, LLMRequest, LLMResponse, LLMResponseError, LLMTimeoutError,
-    LLMUsage,
+    LLMUsage, TextPart, as_parts,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,9 +51,22 @@ class GeminiProvider(LLMProvider):
             cfg_kwargs["response_mime_type"] = "application/json"
             if request.json_schema is not None:
                 cfg_kwargs["response_schema"] = request.json_schema
-        # Gemini takes a single contents string here (all current callers send one
-        # user turn after the system instruction is hoisted out).
-        contents = "\n\n".join(m.content for m in request.messages if m.role != "system")
+        # Build contents from message parts: TextPart -> str, Image/DocumentPart ->
+        # a Gemini Part built from raw bytes. (System instruction is hoisted out.)
+        contents: list = []
+        for m in request.messages:
+            if m.role == "system":
+                continue
+            for part in as_parts(m.content):
+                if isinstance(part, TextPart):
+                    contents.append(part.text)
+                else:  # ImagePart | DocumentPart
+                    contents.append(
+                        gtypes.Part.from_bytes(data=part.data, mime_type=part.mime))
+        # Gemini accepts a single string or a list; keep a string when it's all text
+        # so existing text-only behavior is byte-identical.
+        if len(contents) == 1 and isinstance(contents[0], str):
+            contents = contents[0]
         try:
             client = self._client()
             resp = await client.aio.models.generate_content(
