@@ -9,7 +9,6 @@ import pdfplumber
 from striprtf.striprtf import rtf_to_text
 
 from app.config import settings
-from app.services.ai.llm import get_provider
 
 if TYPE_CHECKING:
     from app.services.ai.llm.config import LLMConfig
@@ -80,20 +79,65 @@ def extract_text_from_rtf(file_path: Path) -> str:
     return rtf_to_text(raw)
 
 
+# Order to try vision providers when the chosen one returns empty/blocked.
+# Anthropic + OpenAI read scanned PDFs that Gemini sometimes RECITATION-blocks,
+# so they lead the fallback order.
+_VISION_FALLBACK_ORDER = (
+    "anthropic", "openai", "gemini", "openrouter", "vertex", "ollama", "lmstudio",
+)
+
+
+def _vision_candidates(config: LLMConfig, api_key: str) -> list:
+    """Ordered ``(name, provider)`` vision candidates to try for OCR.
+
+    The user's chosen ``vision`` provider goes first, then the other
+    configured + enabled providers in a works-most-often order. Only providers
+    that are configured (cloud: has a key; local: always) and enabled are
+    included. ``api_key`` supplies a Gemini key when the resolved config lacks
+    one (legacy callers pass the ``.env`` key).
+    """
+    from app.services.ai.llm.config import LLMConfig, ProviderCreds
+    from app.services.ai.llm.registry import _build
+
+    chosen = config.routing.get("vision") or config.routing.get("default") or "gemini"
+    order = [chosen] + [n for n in _VISION_FALLBACK_ORDER if n != chosen]
+    candidates: list = []
+    seen: set[str] = set()
+    for name in order:
+        if name in seen:
+            continue
+        seen.add(name)
+        creds = config.providers.get(name)
+        # Honor the caller's explicit Gemini key when config carries none.
+        if name == "gemini" and (creds is None or not creds.api_key) and api_key:
+            gem_cfg = LLMConfig(
+                routing={"default": "gemini"},
+                providers={"gemini": ProviderCreds(api_key=api_key, model=settings.gemini_model)},
+            )
+            candidates.append((name, _build("gemini", gem_cfg)))
+            continue
+        if creds is None:
+            continue
+        is_local = name in ("ollama", "lmstudio")
+        if not (bool(creds.api_key) or is_local) or not creds.enabled:
+            continue
+        candidates.append((name, _build(name, config)))
+    return candidates
+
+
 async def _ocr_via_provider(
     parts: list, config: LLMConfig | None, api_key: str, instruction: str
 ) -> str:
-    """Run OCR over ``parts`` via the user's configured ``vision`` provider.
+    """Run OCR over ``parts``, falling back across configured vision providers.
 
-    Builds a multimodal request (the image/document parts plus a trailing text
-    instruction) and routes it through ``get_provider("vision", config)``. On any
-    provider failure (capability/auth/transport), falls back to a Gemini vision
-    provider built from ``api_key`` when one is available; otherwise re-raises so
-    the caller surfaces a clear "no vision provider" error.
+    Tries the user's chosen ``vision`` provider first; if it returns no text
+    (e.g. a Gemini RECITATION block) or fails, the next configured + enabled
+    vision provider is tried, in order. Returns the first non-empty OCR text;
+    ``""`` only when every candidate yields no text; raises only when no
+    candidate could be tried at all.
     """
     from app.services.ai.llm import LLMMessage, LLMRequest
-    from app.services.ai.llm.config import LLMConfig, ProviderCreds
-    from app.services.ai.llm.registry import _build
+    from app.services.ai.llm.config import LLMConfig
     from app.services.ai.llm.types import TextPart
 
     cfg = config or LLMConfig.from_settings()
@@ -103,22 +147,23 @@ async def _ocr_via_provider(
         max_output_tokens=8192,
         temperature=0.0,
     )
-    try:
-        return (await get_provider("vision", cfg).complete(req)).text or ""
-    except Exception:
-        if api_key:  # fall back to Gemini vision when a Gemini key is available
-            logger.warning("vision provider OCR failed — falling back to Gemini", exc_info=True)
-            gem = _build(
-                "gemini",
-                LLMConfig(
-                    routing={"default": "gemini"},
-                    providers={
-                        "gemini": ProviderCreds(api_key=api_key, model=settings.gemini_model)
-                    },
-                ),
-            )
-            return (await gem.complete(req)).text or ""
-        raise
+    candidates = _vision_candidates(cfg, api_key)
+    if not candidates:
+        raise RuntimeError("No vision-capable provider is configured for OCR")
+    last_err: Exception | None = None
+    for name, provider in candidates:
+        try:
+            text = (await provider.complete(req)).text or ""
+        except Exception as exc:  # noqa: BLE001 - try the next provider
+            last_err = exc
+            logger.warning("OCR via %s failed (%s); trying next vision provider", name, exc)
+            continue
+        if text.strip():
+            return text
+        logger.info("OCR via %s returned no text (blocked/empty); trying next", name)
+    if last_err is not None:
+        raise last_err
+    return ""
 
 
 async def _extract_text_from_pdf_gemini(

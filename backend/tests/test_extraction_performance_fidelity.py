@@ -42,7 +42,11 @@ async def test_router_textlayer_note_skips_gemini_vision():
 @pytest.mark.skipif(not _HAS_KEY or not (_SCANNED and _SCANNED.exists()),
                     reason="GEMINI_API_KEY + scanned ibs_smart.pdf required")
 @pytest.mark.asyncio
-async def test_router_scanned_pdf_falls_back_to_gemini_vision():
+async def test_router_scanned_pdf_ocr_via_vision_fallback():
+    """A scanned PDF routes to vision OCR. Gemini RECITATION-blocks ibs_smart.pdf
+    (returns empty), so OCR must fall back to another configured vision provider
+    (e.g. Anthropic/OpenAI) and still return text. Requires at least one non-Gemini
+    vision key configured for the fallback to recover."""
     text, confidence = text_extractor.extract_text_from_pdf_local(_SCANNED)
     print(f"\nibs_smart.pdf local confidence: {confidence:.1f} chars/page (threshold={text_extractor.LOCAL_TEXT_MIN_CHARS_PER_PAGE})")
     if confidence >= text_extractor.LOCAL_TEXT_MIN_CHARS_PER_PAGE:
