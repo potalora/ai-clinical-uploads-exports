@@ -11,7 +11,18 @@ from app.services.ai.llm.types import (
 
 logger = logging.getLogger(__name__)
 
-_FINISH = {"STOP": "stop", "MAX_TOKENS": "length", "SAFETY": "content_filter"}
+_FINISH = {
+    "STOP": "stop",
+    "MAX_TOKENS": "length",
+    # Gemini blocks output for these reasons; normalize them all to
+    # ``content_filter`` so callers (e.g. OCR fallback) can detect a block
+    # instead of seeing an opaque "other".
+    "SAFETY": "content_filter",
+    "RECITATION": "content_filter",
+    "PROHIBITED_CONTENT": "content_filter",
+    "BLOCKLIST": "content_filter",
+    "SPII": "content_filter",
+}
 
 
 class GeminiProvider(LLMProvider):
