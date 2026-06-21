@@ -22,7 +22,7 @@ async def test_large_document_parses_into_multiple_sections():
         ],
     }
     with patch(
-        "app.services.extraction.section_parser._call_gemini_for_sections",
+        "app.services.extraction.section_parser._call_llm_for_sections",
         new=AsyncMock(return_value=raw),
     ):
         doc = await parse_sections(text, "key")

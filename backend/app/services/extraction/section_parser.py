@@ -5,10 +5,10 @@ import logging
 from dataclasses import dataclass, field
 from enum import Enum
 
-from google import genai
 from pydantic import BaseModel
 
 from app.config import settings
+from app.services.ai.llm import LLMMessage, LLMRequest, get_provider
 
 logger = logging.getLogger(__name__)
 
@@ -129,9 +129,12 @@ def resolve_sections(text: str, raw_sections: list[dict]) -> list[ParsedSection]
 
 
 async def parse_sections(text: str, api_key: str) -> ParsedDocument:
-    """Parse a clinical document into logical sections using Gemini.
+    """Parse a clinical document into logical sections via the LLM facade.
 
-    Falls back to a single OTHER section if the LLM call fails.
+    The ``api_key`` parameter is retained for backward compatibility with existing
+    callers but is no longer used internally: provider selection and credentials are
+    resolved by ``get_provider`` from configuration (``LLM_PROVIDER`` / per-operation
+    overrides). Falls back to a single OTHER section if the LLM call fails.
     """
     if not text or len(text.strip()) < 10:
         return ParsedDocument(
@@ -143,7 +146,7 @@ async def parse_sections(text: str, api_key: str) -> ParsedDocument:
         )
 
     try:
-        llm_response = await _call_gemini_for_sections(text, api_key)
+        llm_response = await _call_llm_for_sections(text)
     except Exception:
         logger.exception("Section parsing failed, falling back to single section")
         return ParsedDocument(
@@ -177,18 +180,29 @@ async def parse_sections(text: str, api_key: str) -> ParsedDocument:
     )
 
 
-async def _call_gemini_for_sections(text: str, api_key: str) -> dict:
-    """Call Gemini Flash to parse document sections (type + verbatim anchor only)."""
-    client = genai.Client(api_key=api_key)
-    response = await client.aio.models.generate_content(
-        model=settings.gemini_model,
-        contents=f"{_SECTION_PARSER_PROMPT}\n\n---\n\nDOCUMENT TEXT:\n{text}",
-        config=genai.types.GenerateContentConfig(
-            temperature=0.1,
-            response_mime_type="application/json",
-            response_schema=_SectionParseSchema,
-        ),
+async def _call_llm_for_sections(text: str) -> dict:
+    """Parse document sections (type + verbatim anchor only) via the LLM facade.
+
+    Routes through ``get_provider("section")`` so any configured provider (Gemini by
+    default) handles the call. The Gemini provider forwards ``json_schema`` to its
+    ``response_schema``; other providers ignore it and rely on JSON-object mode. Both
+    yield parseable JSON.
+    """
+    llm = get_provider("section")
+    request = LLMRequest(
+        messages=[
+            LLMMessage(
+                "user",
+                f"{_SECTION_PARSER_PROMPT}\n\n---\n\nDOCUMENT TEXT:\n{text}",
+            )
+        ],
+        model="",
+        max_output_tokens=settings.gemini_summary_max_tokens,
+        temperature=0.1,
+        json_mode=True,
+        json_schema=_SectionParseSchema,
     )
+    response = await llm.complete(request)
     return json.loads(response.text)
 
 

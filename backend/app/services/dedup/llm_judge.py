@@ -5,9 +5,7 @@ import json
 import logging
 from dataclasses import dataclass
 
-from google import genai
-
-from app.config import settings
+from app.services.ai.llm import LLMMessage, LLMRequest, get_provider
 
 logger = logging.getLogger(__name__)
 
@@ -90,26 +88,29 @@ async def judge_candidate_pair(
     record_type: str,
     api_key: str,
 ) -> JudgmentResult:
-    """Judge a single candidate pair using Gemini.
+    """Judge a single candidate pair using the configured LLM provider.
 
-    Returns a JudgmentResult. On failure, returns a safe fallback
-    that flags the pair for manual review.
+    Routing goes through ``get_provider("dedup")``. ``api_key`` is retained for
+    caller compatibility but is no longer used directly (provider credentials
+    come from config). Returns a JudgmentResult. On failure, returns a safe
+    fallback that flags the pair for manual review.
     """
     try:
-        client = genai.Client(api_key=api_key)
+        llm = get_provider("dedup")
         content = (
             f"{_JUDGE_PROMPT}\n\n"
             f"Record type: {record_type}\n\n"
             f"Record A:\n{json.dumps(_strip_patient_fields(fhir_a), indent=2)}\n\n"
             f"Record B:\n{json.dumps(_strip_patient_fields(fhir_b), indent=2)}"
         )
-        response = await client.aio.models.generate_content(
-            model=settings.gemini_model,
-            contents=content,
-            config=genai.types.GenerateContentConfig(
+        response = await llm.complete(
+            LLMRequest(
+                messages=[LLMMessage("user", content)],
+                model="",
+                json_mode=True,
                 temperature=0.1,
-                response_mime_type="application/json",
-            ),
+                max_output_tokens=2048,
+            )
         )
         data = json.loads(response.text)
         return JudgmentResult.from_llm_response(data)

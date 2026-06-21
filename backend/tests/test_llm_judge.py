@@ -2,13 +2,25 @@ from __future__ import annotations
 
 import json
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
 
+from app.services.ai.llm.types import LLMResponse, LLMUsage
 from app.services.dedup.llm_judge import (
     judge_candidate_pair,
     judge_candidates_batch,
     JudgmentResult,
 )
+
+
+def _llm_response(payload: dict) -> LLMResponse:
+    """Build a canned facade response wrapping a JSON judgment payload."""
+    return LLMResponse(
+        text=json.dumps(payload),
+        finish_reason="stop",
+        model="m",
+        usage=LLMUsage(1, 1, 2),
+        raw=None,
+    )
 
 
 MOCK_FHIR_A = {
@@ -90,13 +102,10 @@ class TestJudgeCandidatePair:
 
     @pytest.mark.asyncio
     async def test_judge_returns_result(self):
-        mock_response = MagicMock()
-        mock_response.text = json.dumps(MOCK_LLM_UPDATE)
+        mock_provider = AsyncMock()
+        mock_provider.complete.return_value = _llm_response(MOCK_LLM_UPDATE)
 
-        mock_client = MagicMock()
-        mock_client.aio.models.generate_content = AsyncMock(return_value=mock_response)
-
-        with patch("app.services.dedup.llm_judge.genai.Client", return_value=mock_client):
+        with patch("app.services.dedup.llm_judge.get_provider", return_value=mock_provider):
             result = await judge_candidate_pair(MOCK_FHIR_A, MOCK_FHIR_B, "medication", "fake-key")
 
         assert result.classification == "update"
@@ -113,28 +122,24 @@ class TestJudgeCandidatePair:
             "text": {"div": "<div>Patient John Doe has hypertension</div>"},
         }
 
-        mock_response = MagicMock()
-        mock_response.text = json.dumps(MOCK_LLM_DUPLICATE)
+        mock_provider = AsyncMock()
+        mock_provider.complete.return_value = _llm_response(MOCK_LLM_DUPLICATE)
 
-        mock_client = MagicMock()
-        mock_client.aio.models.generate_content = AsyncMock(return_value=mock_response)
-
-        with patch("app.services.dedup.llm_judge.genai.Client", return_value=mock_client):
+        with patch("app.services.dedup.llm_judge.get_provider", return_value=mock_provider):
             await judge_candidate_pair(fhir_with_patient, fhir_with_patient, "condition", "fake-key")
 
-        # Verify the content sent to Gemini does not contain patient fields
-        call_args = mock_client.aio.models.generate_content.call_args
-        content_sent = call_args.kwargs.get("contents") or call_args.args[0] if call_args.args else ""
-        # Check by keyword arg name - the content is passed as 'contents' kwarg
+        # Verify the content sent to the provider does not contain patient fields
+        request = mock_provider.complete.call_args.args[0]
+        content_sent = request.messages[0].content
         assert "John Doe" not in str(content_sent)
         assert "Patient/123" not in str(content_sent)
 
     @pytest.mark.asyncio
     async def test_judge_handles_api_error(self):
-        mock_client = MagicMock()
-        mock_client.aio.models.generate_content = AsyncMock(side_effect=Exception("API error"))
+        mock_provider = AsyncMock()
+        mock_provider.complete.side_effect = Exception("API error")
 
-        with patch("app.services.dedup.llm_judge.genai.Client", return_value=mock_client):
+        with patch("app.services.dedup.llm_judge.get_provider", return_value=mock_provider):
             result = await judge_candidate_pair(MOCK_FHIR_A, MOCK_FHIR_B, "medication", "fake-key")
 
         assert result.classification == "related"
@@ -146,18 +151,15 @@ class TestJudgeCandidatesBatch:
 
     @pytest.mark.asyncio
     async def test_batch_processes_multiple_pairs(self):
-        mock_response = MagicMock()
-        mock_response.text = json.dumps(MOCK_LLM_DUPLICATE)
-
-        mock_client = MagicMock()
-        mock_client.aio.models.generate_content = AsyncMock(return_value=mock_response)
+        mock_provider = AsyncMock()
+        mock_provider.complete.return_value = _llm_response(MOCK_LLM_DUPLICATE)
 
         pairs = [
             (MOCK_FHIR_A, MOCK_FHIR_A, "medication"),
             (MOCK_FHIR_A, MOCK_FHIR_B, "medication"),
         ]
 
-        with patch("app.services.dedup.llm_judge.genai.Client", return_value=mock_client):
+        with patch("app.services.dedup.llm_judge.get_provider", return_value=mock_provider):
             results = await judge_candidates_batch(pairs, "fake-key")
 
         assert len(results) == 2
@@ -165,13 +167,14 @@ class TestJudgeCandidatesBatch:
 
     @pytest.mark.asyncio
     async def test_batch_handles_partial_failure(self):
-        mock_success = MagicMock()
-        mock_success.text = json.dumps(MOCK_LLM_DUPLICATE)
+        mock_success = _llm_response(MOCK_LLM_DUPLICATE)
 
-        mock_client = MagicMock()
-        mock_client.aio.models.generate_content = AsyncMock(
-            side_effect=[mock_success, Exception("API error"), mock_success]
-        )
+        mock_provider = AsyncMock()
+        mock_provider.complete.side_effect = [
+            mock_success,
+            Exception("API error"),
+            mock_success,
+        ]
 
         pairs = [
             (MOCK_FHIR_A, MOCK_FHIR_A, "medication"),
@@ -179,7 +182,7 @@ class TestJudgeCandidatesBatch:
             (MOCK_FHIR_A, MOCK_FHIR_A, "medication"),
         ]
 
-        with patch("app.services.dedup.llm_judge.genai.Client", return_value=mock_client):
+        with patch("app.services.dedup.llm_judge.get_provider", return_value=mock_provider):
             results = await judge_candidates_batch(pairs, "fake-key")
 
         assert len(results) == 3
