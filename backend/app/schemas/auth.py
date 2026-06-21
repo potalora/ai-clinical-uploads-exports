@@ -42,6 +42,12 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class LogoutRequest(BaseModel):
+    """Optional logout body — supplying the refresh token revokes it server-side."""
+
+    refresh_token: str | None = None
+
+
 class UserResponse(BaseModel):
     id: UUID
     email: str

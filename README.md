@@ -11,7 +11,7 @@
 
 Your medical history arrives scattered across formats and portals: a FHIR bundle from one system, an Epic EHI export from another, a CDA document from the hospital, a scanned PDF from the specialist who still faxes. Strand ingests all of it — structured exports and unstructured documents alike, reading scans and notes into structured records with optional AI — normalizes everything to FHIR R4, removes the duplicates that pile up across exports, and lays it out on one interactive timeline.
 
-Then it's yours to use. Strand can write you a summary, hand you a de-identified prompt to paste into any LLM, export a standard FHIR bundle for another system, or give you clean context to drop into the AI of your choice. The AI is optional and privacy-preserving: every record is de-identified before it reaches a model, and a prompt-only mode sends nothing anywhere. Strand organizes and moves your records; it does not diagnose, interpret, or give medical advice.
+Then it's yours to use. Strand can write you a summary, hand you a de-identified prompt to paste into any LLM, export a standard FHIR bundle for another system, or give you clean context to drop into the AI of your choice. The AI is optional: before any record reaches a model it runs through a de-identification pass (best-effort PII reduction, not certified Safe Harbor de-identification), and a prompt-only mode sends nothing anywhere. Strand organizes and moves your records; it does not diagnose, interpret, or give medical advice.
 
 ## A quick tour
 
@@ -43,7 +43,7 @@ Everything binds to `127.0.0.1`, so nothing is reachable from outside your machi
 flowchart LR
     I["Add records<br/><small>FHIR · Epic · CDA · PDF/scan</small>"]
     N["Normalize + dedup<br/><small>→ FHIR R4, scrub PHI</small>"]
-    S["One timeline<br/><small>encrypted, on your machine</small>"]
+    S["One timeline<br/><small>on your machine</small>"]
     O["Take it out<br/><small>summary · prompt · FHIR · AI context</small>"]
     I --> N --> S --> O
 ```
@@ -78,14 +78,14 @@ Getting records out matters as much as getting them in. From your records you ca
 - **A summary** — Strand writes it for you in live AI mode, using whichever model you pick: Gemini, Claude, an OpenAI model, or one running locally.
 - **A copy-paste prompt** — a de-identified prompt, ready to run in any LLM, no API key needed.
 - **A FHIR R4 bundle** — a standard export for any other app or system.
-- **De-identified context** — the scrubbed records themselves, to drop into the AI chat of your choice.
+- **Scrubbed context** — the de-identified records themselves, to drop into the AI chat of your choice.
 
-Anything that involves a model is de-identified first; the prompt and context paths never call one at all.
+Anything that involves a model is scrubbed for PII first; the prompt and context paths never call one at all.
 
 ## Privacy and AI
 
-- **AI is optional, and off the critical path.** Prompt-only mode builds a prompt you run yourself and sends nothing anywhere. Live mode calls a model directly, and de-identifies every record first.
-- **De-identification runs before every model call**, in three layers: regex identifiers, your own known identifiers (name, MRN, DOB), and a spaCy name model for the free-text names patterns miss.
+- **AI is optional, and off the critical path.** Prompt-only mode builds a prompt you run yourself and sends nothing anywhere. Live mode calls a model directly, running every record through the de-identification pass first.
+- **A de-identification pass runs before every model call**, in three layers: regex identifiers, your own known identifiers (name, MRN, DOB), and a spaCy name model for the free-text names patterns miss. It's best-effort PII reduction, not certified Safe Harbor de-identification.
 - **No medical advice.** Strand organizes, summarizes, and exports records. It never generates diagnoses, interpretations, or treatment suggestions.
 - **It runs on your machine.** The stack is self-hosted and binds to `127.0.0.1`, so nothing is exposed by default.
 - **Honest about limits.** Some things still slip through the scrubber (city names, for one), and there's no auto-update — with health data, you decide when to move to a new version.
@@ -104,7 +104,7 @@ Strand isn't tied to one model. Add a key for whichever provider you want, or ru
 | LM Studio | local server, no key | On your machine |
 | Vertex AI | Google Cloud project | Cloud |
 
-Any OpenAI-compatible endpoint works through the OpenAI option — just point it at the base URL. You can route each task to a different provider (say, a local model for document extraction and a cloud model for summaries), and if one provider declines a scanned document during OCR, Strand falls back to the next one you've configured. Cloud providers only ever receive de-identified records; local models keep everything on your machine.
+Any OpenAI-compatible endpoint works through the OpenAI option — just point it at the base URL. You can route each task to a different provider (say, a local model for document extraction and a cloud model for summaries), and if one provider declines a scanned document during OCR, Strand falls back to the next one you've configured. Cloud providers receive records only after the de-identification pass, which is best-effort and not a guarantee that every identifier is removed; local models keep everything on your machine.
 
 ## How it works
 
@@ -144,7 +144,7 @@ erDiagram
     health_records ||--o{ provenance : "tracked by"
 ```
 
-`health_records` is the core table: every clinical fact, stored as FHIR R4 JSONB. UUID primary keys everywhere; PII encrypted at rest with AES-256/pgcrypto. Nothing is hard-deleted: `deleted_at` marks a row gone, and deleting an upload cascades that soft-delete to the records it produced. Full schema lives in the Alembic migrations.
+`health_records` is the core table: every clinical fact, stored as FHIR R4 JSONB. UUID primary keys everywhere. Patient demographic identifiers (name, MRN, date of birth, contact) are encrypted at rest with app-layer AES-256-GCM; the FHIR records themselves, uploaded files, and AI summaries are not yet encrypted at rest (see [Security](#security-and-hipaa-informed-controls) for what to do in the meantime). Nothing is hard-deleted: `deleted_at` marks a row gone, and deleting an upload cascades that soft-delete to the records it produced. Full schema lives in the Alembic migrations.
 
 ## Configuration
 
@@ -196,17 +196,19 @@ Full contract: [`docs/backend-handoff.md`](docs/backend-handoff.md) (base URL `/
 | **Dedup** | `/dedup/candidates` · `/merge` · `/dismiss` |
 | **Summary & export** | `/summary/build-prompt` · `/generate` · `/paste-response` · `GET /records/export` |
 
-## Security and HIPAA controls
+## Security and HIPAA-informed controls
 
 | Authentication | Data protection | Monitoring |
 |----------------|-----------------|------------|
-| bcrypt (cost 12+) | AES-256 at rest | Audit log on all data endpoints |
+| bcrypt (cost 12+) | AES-256 on patient identifiers | Audit log on all data endpoints |
 | JWT 15-min access tokens | PHI scrub before any AI call | Rate limiting |
 | 7-day refresh tokens (rotated) | Soft delete only | Account lockout (5 fails) |
 | Token revocation (JTI) | User-scoped queries | 30-min idle timeout |
 | Password complexity | UUID upload filenames | CORS hardening |
 
-Strand is built to be HIPAA-minded for self-hosting; a single-user, self-hosted instance is not a covered entity, and "HIPAA controls" here describes the safeguards in the code, not a certification.
+**What's encrypted at rest.** Patient demographic identifiers (name, MRN, date of birth, and contact details) are encrypted with app-layer AES-256-GCM. The clinical FHIR records themselves, uploaded source files, account email, and AI summary text are not yet encrypted at rest; doing so is planned. Until then, turn on OS full-disk encryption (FileVault, LUKS, or BitLocker) on the host, which protects the database files and uploads as a defense-in-depth layer.
+
+These are HIPAA-informed security controls, not a certification. HIPAA compliance is an organizational state — risk analysis, business associate agreements, a trained workforce, audited policies — not a property of code, and a single-user, self-hosted instance is not a covered entity in the first place. The controls here describe the safeguards in the code, not a certification of compliance, and the operator is responsible for any compliance obligations that attach to their use.
 
 ## Tech stack
 

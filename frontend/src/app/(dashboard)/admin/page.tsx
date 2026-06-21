@@ -1994,9 +1994,10 @@ function SystemTab() {
   };
 
   const handleSignOut = async () => {
-    // API → POST /auth/logout (revokes the refresh token server-side), then clear local tokens.
+    // API → POST /auth/logout with the refresh token, so the server revokes BOTH
+    // the access and refresh tokens; then clear local tokens.
     try {
-      await api.post("/auth/logout");
+      await api.logout();
     } catch {
       // Best-effort: still clear locally even if the call fails.
     }

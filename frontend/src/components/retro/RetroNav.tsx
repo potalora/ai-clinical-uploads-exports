@@ -48,7 +48,7 @@ function initialsFrom(user: UserResponse | null): string {
 export function RetroNav() {
   const pathname = usePathname();
   const router = useRouter();
-  const { accessToken, clearTokens } = useAuthStore();
+  const { clearTokens } = useAuthStore();
   const { user, fetchUser, clearUser } = useUserStore();
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
@@ -63,7 +63,7 @@ export function RetroNav() {
 
   const handleLogout = async () => {
     try {
-      await api.post("/auth/logout", undefined, accessToken ?? undefined);
+      await api.logout();
     } catch {
       // Logout even if the server call fails
     }

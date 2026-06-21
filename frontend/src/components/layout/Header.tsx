@@ -6,12 +6,12 @@ import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 
 export function Header() {
-  const { isAuthenticated, accessToken, clearTokens } = useAuthStore();
+  const { isAuthenticated, clearTokens } = useAuthStore();
   const router = useRouter();
 
   const handleLogout = async () => {
     try {
-      await api.post("/auth/logout", undefined, accessToken ?? undefined);
+      await api.logout();
     } catch {
       // Logout even if server call fails
     }

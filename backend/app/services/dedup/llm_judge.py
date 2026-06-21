@@ -6,6 +6,7 @@ import logging
 from dataclasses import dataclass
 
 from app.services.ai.llm import LLMConfig, LLMMessage, LLMRequest, get_provider
+from app.services.ai.phi_scrubber import scrub_phi
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,21 @@ _STRIP_FIELDS = {
 def _strip_patient_fields(resource: dict) -> dict:
     """Remove patient-identifying fields from a FHIR resource before LLM judgment."""
     return {k: v for k, v in resource.items() if k not in _STRIP_FIELDS}
+
+
+def _serialize_for_llm(resource: dict) -> str:
+    """Serialize a FHIR resource to a de-identified JSON string for the LLM.
+
+    Two passes, defense in depth:
+    1. ``_strip_patient_fields`` drops whole patient-identifying top-level keys
+       (``subject``/``recorder``/``text``/...).
+    2. The full PHI scrubber runs over the serialized JSON so identifiers hiding
+       in NON-stripped value fields (``valueString``, ``note[].text``,
+       ``identifier``, dates, ...) are redacted too. This honors the project rule
+       that de-identification must run before every ``provider.complete()`` call.
+    """
+    serialized = json.dumps(_strip_patient_fields(resource), indent=2)
+    return scrub_phi(serialized)[0]
 
 _JUDGE_PROMPT = """\
 You are a clinical record deduplication judge. Given two FHIR resources of the same \
@@ -103,8 +119,8 @@ async def judge_candidate_pair(
         content = (
             f"{_JUDGE_PROMPT}\n\n"
             f"Record type: {record_type}\n\n"
-            f"Record A:\n{json.dumps(_strip_patient_fields(fhir_a), indent=2)}\n\n"
-            f"Record B:\n{json.dumps(_strip_patient_fields(fhir_b), indent=2)}"
+            f"Record A:\n{_serialize_for_llm(fhir_a)}\n\n"
+            f"Record B:\n{_serialize_for_llm(fhir_b)}"
         )
         response = await llm.complete(
             LLMRequest(

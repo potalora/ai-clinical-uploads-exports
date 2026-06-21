@@ -5,16 +5,18 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import get_authenticated_user_id
 from app.middleware.audit import log_audit_event
-from app.middleware.auth import decode_token
+from app.middleware.auth import decode_token, security
 from app.middleware.rate_limit import login_limiter, register_limiter
 from app.models.token_blacklist import RevokedToken
 from app.schemas.auth import (
     LoginRequest,
+    LogoutRequest,
     RefreshRequest,
     RegisterRequest,
     TokenResponse,
@@ -109,33 +111,55 @@ async def refresh(
     return tokens
 
 
+def _stage_revocation(db: AsyncSession, payload: dict, user_id: UUID) -> None:
+    """Add a token's JTI to the blacklist within the current session (no commit)."""
+    jti = payload.get("jti")
+    if not jti:
+        return
+    exp = payload.get("exp")
+    expires_at = (
+        datetime.fromtimestamp(exp, tz=timezone.utc)
+        if exp
+        else datetime.now(timezone.utc)
+    )
+    db.add(
+        RevokedToken(
+            jti=jti,
+            user_id=user_id,
+            token_type=payload.get("type", "access"),
+            expires_at=expires_at,
+        )
+    )
+
+
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 async def logout(
     request: Request,
+    body: LogoutRequest | None = None,
     user_id: UUID = Depends(get_authenticated_user_id),
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """Logout and revoke the current access token."""
-    # Revoke the access token
-    auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
-        token = auth_header[7:]
-        try:
-            payload = decode_token(token)
-            jti = payload.get("jti")
-            if jti:
-                exp = payload.get("exp")
-                expires_at = datetime.fromtimestamp(exp, tz=timezone.utc) if exp else datetime.now(timezone.utc)
-                revoked = RevokedToken(
-                    jti=jti,
-                    user_id=user_id,
-                    token_type=payload.get("type", "access"),
-                    expires_at=expires_at,
-                )
-                db.add(revoked)
-                await db.commit()
-        except Exception:
-            logger.warning("Failed to revoke token on logout for user %s", user_id)
+    """Logout and revoke the current access token and, if supplied, the refresh token.
+
+    The refresh token is only revoked when it belongs to the authenticated user, so
+    a caller cannot revoke someone else's session. Revocation is best-effort: a bad
+    token never fails the logout.
+    """
+    try:
+        if credentials is not None:
+            _stage_revocation(db, decode_token(credentials.credentials), user_id)
+        if body is not None and body.refresh_token:
+            refresh_payload = decode_token(body.refresh_token)
+            if (
+                refresh_payload.get("type") == "refresh"
+                and refresh_payload.get("sub") == str(user_id)
+            ):
+                _stage_revocation(db, refresh_payload, user_id)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.warning("Failed to revoke token(s) on logout for user %s", user_id)
 
     await log_audit_event(
         db,

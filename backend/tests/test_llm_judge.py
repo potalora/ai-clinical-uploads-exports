@@ -145,6 +145,52 @@ class TestJudgeCandidatePair:
         assert result.classification == "related"
         assert result.confidence == 0.0
 
+    @pytest.mark.asyncio
+    async def test_judge_scrubs_phi_in_nonstripped_fields(self):
+        """PHI living in fields NOT covered by the top-level denylist (e.g.
+        ``valueString``) must still be scrubbed before reaching the provider.
+
+        The top-level ``_strip_patient_fields`` denylist only removes whole keys
+        like ``subject``/``text``; it does nothing for PHI embedded in arbitrary
+        value fields. Project rule: de-id must run before every
+        ``provider.complete()`` call.
+        """
+        fhir = {
+            "resourceType": "Observation",
+            "code": {"text": "Glucose"},
+            "valueString": "Result faxed 07/14/2023; contact patient@example.com",
+        }
+
+        mock_provider = AsyncMock()
+        mock_provider.complete.return_value = _llm_response(MOCK_LLM_DUPLICATE)
+
+        with patch("app.services.dedup.llm_judge.get_provider", return_value=mock_provider):
+            await judge_candidate_pair(fhir, fhir, "observation", "fake-key")
+
+        content = mock_provider.complete.call_args.args[0].messages[0].content
+        # Email and slash-date PHI must not survive into the prompt content.
+        assert "patient@example.com" not in content
+        assert "07/14/2023" not in content
+        # The non-PHI clinical content should still be present.
+        assert "Glucose" in content
+
+    @pytest.mark.asyncio
+    async def test_judge_preserves_clinical_structure_after_scrub(self):
+        """Scrubbing must not destroy the non-PHI clinical signal the judge needs."""
+        mock_provider = AsyncMock()
+        mock_provider.complete.return_value = _llm_response(MOCK_LLM_UPDATE)
+
+        with patch("app.services.dedup.llm_judge.get_provider", return_value=mock_provider):
+            result = await judge_candidate_pair(
+                MOCK_FHIR_A, MOCK_FHIR_B, "medication", "fake-key"
+            )
+
+        content = mock_provider.complete.call_args.args[0].messages[0].content
+        assert "Metformin 500mg" in content
+        assert "Metformin 1000mg" in content
+        # Behavior otherwise unchanged: still returns the parsed judgment.
+        assert result.classification == "update"
+
 
 class TestJudgeCandidatesBatch:
     """Tests for batch judgment with concurrency."""

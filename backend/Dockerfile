@@ -80,9 +80,13 @@ WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
 COPY . /app/
 
+# APP_ENV defaults to production in the image so a deploy that forgets to set it
+# is fail-closed (the config validator then rejects default/weak secrets). Compose
+# and local dev override it explicitly.
 ENV PATH=/app/.venv/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    APP_ENV=production \
     UPLOAD_DIR=/data/uploads \
     TEMP_EXTRACT_DIR=/data/tmp
 
