@@ -60,6 +60,38 @@ class Settings(BaseSettings):
     gemini_summary_thinking_level: str = "low"
     gemini_concurrency_limit: int = 10
 
+    # --- Multi-LLM provider routing (see docs/.../multi-llm-provider-design.md) ---
+    # Global default provider. Unset/"gemini" preserves current behavior exactly.
+    # One of: gemini | openai | anthropic | openrouter | lmstudio | ollama | vertex
+    llm_provider: str = "gemini"
+    # Optional per-operation overrides (blank => fall back to llm_provider).
+    llm_summary_provider: str = ""
+    llm_section_provider: str = ""
+    llm_dedup_provider: str = ""
+    llm_extraction_provider: str = ""
+
+    # OpenAI-compatible family (base_url distinguishes them; all speak the
+    # OpenAI Chat Completions API, so one provider class serves all four).
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4o-mini"
+    openai_base_url: str = "https://api.openai.com/v1"
+    openrouter_api_key: str = ""
+    openrouter_model: str = "openai/gpt-4o-mini"
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    ollama_base_url: str = "http://localhost:11434/v1"
+    ollama_model: str = "llama3.2"
+    lmstudio_base_url: str = "http://localhost:1234/v1"
+    lmstudio_model: str = ""  # blank => resolved from /v1/models at call time
+
+    # Anthropic
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-haiku-4-5-20251001"
+
+    # Vertex (Gemini-on-Vertex via google-genai vertexai mode)
+    vertex_project: str = ""
+    vertex_location: str = "us-central1"
+    vertex_model: str = "gemini-3.5-flash"
+
     # Extraction pipeline
     extraction_concurrency: int = 5
     # Concurrent entity-extraction chunks per upload. Capped by gemini_concurrency_limit.
