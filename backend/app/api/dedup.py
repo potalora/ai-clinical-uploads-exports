@@ -210,8 +210,19 @@ async def merge_records(
     db: AsyncSession = Depends(get_db),
 ):
     """Merge two duplicate records."""
+    # Object-level authorization: DedupCandidate has no user_id, so scope it by
+    # joining record_a -> HealthRecord.user_id (same pattern as every other dedup
+    # endpoint). Without this, any user could mutate/read another user's queue.
+    from sqlalchemy.orm import aliased
+
+    RecordA = aliased(HealthRecord)
     result = await db.execute(
-        select(DedupCandidate).where(DedupCandidate.id == body.candidate_id)
+        select(DedupCandidate)
+        .join(RecordA, DedupCandidate.record_a_id == RecordA.id)
+        .where(
+            DedupCandidate.id == body.candidate_id,
+            RecordA.user_id == user_id,
+        )
     )
     candidate = result.scalar_one_or_none()
     if not candidate:
@@ -266,8 +277,18 @@ async def dismiss_candidate(
     db: AsyncSession = Depends(get_db),
 ):
     """Dismiss a dedup candidate pair."""
+    # Object-level authorization: scope the candidate to the caller via
+    # record_a -> HealthRecord.user_id (DedupCandidate carries no user_id).
+    from sqlalchemy.orm import aliased
+
+    RecordA = aliased(HealthRecord)
     result = await db.execute(
-        select(DedupCandidate).where(DedupCandidate.id == body.candidate_id)
+        select(DedupCandidate)
+        .join(RecordA, DedupCandidate.record_a_id == RecordA.id)
+        .where(
+            DedupCandidate.id == body.candidate_id,
+            RecordA.user_id == user_id,
+        )
     )
     candidate = result.scalar_one_or_none()
     if not candidate:
