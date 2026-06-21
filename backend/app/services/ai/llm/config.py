@@ -40,6 +40,8 @@ class LLMConfig:
 
     routing: dict[str, str] = field(default_factory=dict)
     providers: dict[str, ProviderCreds] = field(default_factory=dict)
+    # On-device-vs-cloud entity extraction: "gemini" | "local" | "hybrid".
+    extraction_engine: str = ""
 
     @classmethod
     def from_settings(cls) -> LLMConfig:
@@ -63,7 +65,11 @@ class LLMConfig:
             "ollama": ProviderCreds("", settings.ollama_base_url, settings.ollama_model),
             "lmstudio": ProviderCreds("", settings.lmstudio_base_url, settings.lmstudio_model),
         }
-        return cls(routing=routing, providers=providers)
+        return cls(
+            routing=routing,
+            providers=providers,
+            extraction_engine=settings.extraction_engine,
+        )
 
 
 async def load_llm_config(db: AsyncSession, user_id: UUID) -> LLMConfig:
@@ -110,4 +116,6 @@ async def load_llm_config(db: AsyncSession, user_id: UUID) -> LLMConfig:
         for op in ("summary", "section", "dedup", "extraction", "vision"):
             val = getattr(pref, f"{op}_provider", None)
             cfg.routing[op] = val or cfg.routing.get(op) or cfg.routing["default"]
+        if pref.extraction_engine:
+            cfg.extraction_engine = pref.extraction_engine
     return cfg
