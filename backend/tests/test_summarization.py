@@ -1,15 +1,28 @@
 from __future__ import annotations
 
-import os
 from uuid import UUID
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
+from unittest.mock import AsyncMock, patch
 
+from app.services.ai.llm.types import LLMResponse, LLMUsage
 from tests.conftest import auth_headers, create_test_patient, seed_test_records
 
-HAS_API_KEY = bool(os.environ.get("GEMINI_API_KEY"))
+
+def _mock_provider(text: str, model: str = "gemini-3.5-flash") -> AsyncMock:
+    """Build an AsyncMock LLM provider whose ``complete`` returns canned text."""
+    prov = AsyncMock()
+    prov.name = "gemini"
+    prov.complete.return_value = LLMResponse(
+        text=text,
+        finish_reason="stop",
+        model=model,
+        usage=LLMUsage(10, 5, 15),
+        raw=None,
+    )
+    return prov
 
 
 # ---------- Unit tests (no API calls) ----------
@@ -128,76 +141,127 @@ async def test_generate_patient_not_found(client: AsyncClient, db_session: Async
     assert resp.status_code == 404
 
 
-# ---------- Integration tests with Gemini API (slow) ----------
+# ---------- Integration tests (facade mocked; no live API) ----------
+#
+# These drive the full /summary/generate endpoint but patch the LLM facade
+# (``get_provider``) so the canned provider response stands in for a live call.
+# generate_summary still resolves the gemini path (provider=None), so a dummy
+# key satisfies the in-function guard.
 
-@pytest.mark.slow
-@pytest.mark.skipif(not HAS_API_KEY, reason="Requires GEMINI_API_KEY")
+
 @pytest.mark.asyncio
 async def test_generate_natural_language(client: AsyncClient, db_session: AsyncSession):
-    """Generate NL summary via Gemini and verify response."""
+    """Generate NL summary via the facade and verify response shape."""
     headers, user_id = await auth_headers(client)
     patient = await create_test_patient(db_session, user_id)
     await seed_test_records(db_session, user_id, patient.id, count=5)
 
-    resp = await client.post(
-        "/api/v1/summary/generate",
-        json={
-            "patient_id": str(patient.id),
-            "summary_type": "full",
-            "output_format": "natural_language",
-        },
-        headers=headers,
+    nl_text = (
+        "Health record overview organized by category. The patient has several "
+        "documented conditions, medications, and lab results across visits."
     )
+
+    from app.config import settings
+
+    original_key = settings.gemini_api_key
+    settings.gemini_api_key = "test-key"
+    try:
+        with patch(
+            "app.services.ai.summarizer.get_provider",
+            return_value=_mock_provider(nl_text),
+        ):
+            resp = await client.post(
+                "/api/v1/summary/generate",
+                json={
+                    "patient_id": str(patient.id),
+                    "summary_type": "full",
+                    "output_format": "natural_language",
+                },
+                headers=headers,
+            )
+    finally:
+        settings.gemini_api_key = original_key
+
     assert resp.status_code == 200
     data = resp.json()
     assert data["natural_language"] is not None
     assert len(data["natural_language"]) > 50
     assert data["record_count"] == 5
-    assert data["model_used"] is not None
+    assert data["model_used"] == "gemini-3.5-flash"
 
 
-@pytest.mark.slow
-@pytest.mark.skipif(not HAS_API_KEY, reason="Requires GEMINI_API_KEY")
 @pytest.mark.asyncio
 async def test_generate_json_format(client: AsyncClient, db_session: AsyncSession):
-    """Generate JSON summary via Gemini and verify valid JSON returned."""
+    """Generate JSON summary via the facade and verify valid JSON returned."""
     headers, user_id = await auth_headers(client)
     patient = await create_test_patient(db_session, user_id)
     await seed_test_records(db_session, user_id, patient.id, count=3)
 
-    resp = await client.post(
-        "/api/v1/summary/generate",
-        json={
-            "patient_id": str(patient.id),
-            "summary_type": "full",
-            "output_format": "json",
-        },
-        headers=headers,
+    json_text = (
+        '{"summary": "Brief overview", "categories": {"conditions": [], '
+        '"medications": []}, "timeline_highlights": []}'
     )
+
+    from app.config import settings
+
+    original_key = settings.gemini_api_key
+    settings.gemini_api_key = "test-key"
+    try:
+        with patch(
+            "app.services.ai.summarizer.get_provider",
+            return_value=_mock_provider(json_text),
+        ):
+            resp = await client.post(
+                "/api/v1/summary/generate",
+                json={
+                    "patient_id": str(patient.id),
+                    "summary_type": "full",
+                    "output_format": "json",
+                },
+                headers=headers,
+            )
+    finally:
+        settings.gemini_api_key = original_key
+
     assert resp.status_code == 200
     data = resp.json()
     assert data["json_data"] is not None
     assert isinstance(data["json_data"], dict)
 
 
-@pytest.mark.slow
-@pytest.mark.skipif(not HAS_API_KEY, reason="Requires GEMINI_API_KEY")
 @pytest.mark.asyncio
 async def test_generate_both_formats(client: AsyncClient, db_session: AsyncSession):
-    """Generate both NL + JSON summary via Gemini."""
+    """Generate both NL + JSON summary via the facade."""
     headers, user_id = await auth_headers(client)
     patient = await create_test_patient(db_session, user_id)
     await seed_test_records(db_session, user_id, patient.id, count=3)
 
-    resp = await client.post(
-        "/api/v1/summary/generate",
-        json={
-            "patient_id": str(patient.id),
-            "summary_type": "full",
-            "output_format": "both",
-        },
-        headers=headers,
+    both_text = (
+        '{"natural_language": "A markdown summary of the records.", '
+        '"structured_data": {"summary": "overview", "categories": {}}}'
     )
+
+    from app.config import settings
+
+    original_key = settings.gemini_api_key
+    settings.gemini_api_key = "test-key"
+    try:
+        with patch(
+            "app.services.ai.summarizer.get_provider",
+            return_value=_mock_provider(both_text),
+        ):
+            resp = await client.post(
+                "/api/v1/summary/generate",
+                json={
+                    "patient_id": str(patient.id),
+                    "summary_type": "full",
+                    "output_format": "both",
+                },
+                headers=headers,
+            )
+    finally:
+        settings.gemini_api_key = original_key
+
     assert resp.status_code == 200
     data = resp.json()
     # At least one of the two should be populated

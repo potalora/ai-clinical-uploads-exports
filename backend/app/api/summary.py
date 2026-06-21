@@ -274,6 +274,29 @@ async def list_responses(
     }
 
 
+@router.get("/providers")
+async def list_providers(
+    request: Request,
+    user_id: UUID = Depends(get_authenticated_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """List selectable LLM providers and the default routed summary provider.
+
+    Returns display metadata only — never API keys.
+    """
+    from app.services.ai.llm.registry import available_providers, provider_name_for
+
+    await log_audit_event(
+        db,
+        user_id=user_id,
+        action="summary.providers.list",
+        resource_type="ai_summary",
+        ip_address=request.client.host if request.client else None,
+    )
+
+    return {"providers": available_providers(), "default": provider_name_for("summary")}
+
+
 @router.post("/generate", response_model=GenerateSummaryResponse)
 async def generate_summary_endpoint(
     body: GenerateSummaryRequest,
@@ -304,6 +327,8 @@ async def generate_summary_endpoint(
             output_format=body.output_format,
             custom_system_prompt=body.custom_system_prompt,
             custom_user_prompt=body.custom_user_prompt,
+            provider=body.provider,
+            model=body.model,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

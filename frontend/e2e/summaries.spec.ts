@@ -59,8 +59,12 @@ test.describe("Summaries page", () => {
 
     await page.getByRole("button", { name: "By category" }).click();
 
-    // The category select appears with options like "Labs & Vitals".
-    const categorySelect = page.locator("select").nth(1);
+    // The category select appears with options like "Labs & Vitals". Locate it by
+    // its option text rather than position — the page now also renders an "AI
+    // provider" select, so a fixed index (nth) is no longer reliable.
+    const categorySelect = page
+      .locator("select")
+      .filter({ hasText: "Labs & Vitals" });
     await expect(categorySelect).toBeVisible({ timeout: 5_000 });
     await expect(categorySelect).toContainText("Labs & Vitals");
   });

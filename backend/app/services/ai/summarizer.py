@@ -5,14 +5,13 @@ import logging
 from datetime import datetime
 from uuid import UUID
 
-from google import genai
-from google.genai import types
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.patient import Patient
 from app.models.record import HealthRecord
+from app.services.ai.llm import LLMMessage, LLMRequest, ReasoningConfig, get_provider
 from app.services.ai.patient_phi import patient_scrub_args
 from app.services.ai.phi_scrubber import scrub_phi
 from app.services.ai.prompt_builder import _format_record
@@ -90,14 +89,22 @@ async def generate_summary(
     output_format: str = "natural_language",
     custom_system_prompt: str | None = None,
     custom_user_prompt: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
 ) -> dict:
-    """Generate a summary by calling Gemini 3 Flash.
+    """Generate a summary by calling the configured LLM provider.
+
+    Routes through the provider-agnostic LLM facade (default: Gemini). An
+    explicit ``provider`` overrides the routed summary provider for this call;
+    ``model`` overrides the provider's configured default model.
 
     Returns a dict with keys: natural_language, json_data, record_count,
     duplicate_warning, de_identification_report, model_used, system_prompt,
     user_prompt.
     """
-    if not settings.gemini_api_key:
+    # Only the Gemini path depends on GEMINI_API_KEY. For other providers the
+    # provider itself raises a normalized auth error if its key is missing.
+    if provider in (None, "gemini") and not settings.gemini_api_key:
         raise ValueError("GEMINI_API_KEY is not configured")
 
     # Count total vs deduped records
@@ -150,27 +157,21 @@ The following de-identified health records are provided for summarization:
 
 Please provide a structured summary following the rules in the system prompt."""
 
-    # Call Gemini
-    client = genai.Client(api_key=settings.gemini_api_key)
+    # Resolve provider: explicit arg overrides the routed summary provider.
+    llm = get_provider("summary") if provider is None else _provider_by_name(provider)
 
-    config_kwargs: dict = {
-        "system_instruction": system_prompt,
-        "temperature": settings.gemini_summary_temperature,
-        "max_output_tokens": settings.gemini_summary_max_tokens,
+    request = LLMRequest(
+        messages=[LLMMessage("user", user_prompt)],
+        model=model or "",  # blank => provider's configured default
+        system=system_prompt,
+        max_output_tokens=settings.gemini_summary_max_tokens,
+        temperature=settings.gemini_summary_temperature,
+        json_mode=output_format in ("json", "both"),
         # Bound reasoning tokens so they don't consume the output budget and
         # truncate the visible summary (gemini-3.x flash thinks by default).
-        "thinking_config": types.ThinkingConfig(
-            thinking_level=settings.gemini_summary_thinking_level
-        ),
-    }
-    if output_format in ("json", "both"):
-        config_kwargs["response_mime_type"] = "application/json"
-
-    response = client.models.generate_content(
-        model=settings.gemini_model,
-        contents=user_prompt,
-        config=types.GenerateContentConfig(**config_kwargs),
+        reasoning=ReasoningConfig(level=settings.gemini_summary_thinking_level),
     )
+    response = await llm.complete(request)
 
     response_text = response.text or ""
 
@@ -194,12 +195,7 @@ Please provide a structured summary following the rules in the system prompt."""
             natural_language = response_text
 
     # Token usage
-    tokens_used = None
-    if response.usage_metadata:
-        tokens_used = (
-            (response.usage_metadata.prompt_token_count or 0)
-            + (response.usage_metadata.candidates_token_count or 0)
-        )
+    tokens_used = response.usage.total_tokens or None
 
     return {
         "natural_language": natural_language,
@@ -207,11 +203,21 @@ Please provide a structured summary following the rules in the system prompt."""
         "record_count": len(records),
         "duplicate_warning": duplicate_warning,
         "de_identification_report": de_id_report,
-        "model_used": settings.gemini_model,
+        "model_used": response.model,
         "system_prompt": system_prompt,
         "user_prompt": user_prompt,
         "tokens_used": tokens_used,
     }
+
+
+def _provider_by_name(name: str):
+    """Build a one-off provider for an explicit per-request override."""
+    from app.services.ai.llm.registry import KNOWN_PROVIDERS, _build
+    from app.services.ai.llm.types import LLMBadRequestError
+
+    if name not in KNOWN_PROVIDERS:
+        raise LLMBadRequestError(f"Unknown provider: {name!r}")
+    return _build(name)
 
 
 def _get_system_prompt(output_format: str) -> str:

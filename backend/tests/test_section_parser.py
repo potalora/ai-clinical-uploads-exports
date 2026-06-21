@@ -41,9 +41,9 @@ MOCK_LLM_RESPONSE = {
 
 @pytest.mark.asyncio
 async def test_parse_sections_returns_parsed_document():
-    """Mock _call_gemini_for_sections and verify ParsedDocument with correct fields."""
+    """Mock _call_llm_for_sections and verify ParsedDocument with correct fields."""
     with patch(
-        "app.services.extraction.section_parser._call_gemini_for_sections",
+        "app.services.extraction.section_parser._call_llm_for_sections",
         new_callable=AsyncMock,
         return_value=MOCK_LLM_RESPONSE,
     ):
@@ -61,7 +61,7 @@ async def test_parse_sections_returns_parsed_document():
 async def test_parse_sections_maps_section_types():
     """Verify section types are correctly mapped to SectionType enum."""
     with patch(
-        "app.services.extraction.section_parser._call_gemini_for_sections",
+        "app.services.extraction.section_parser._call_llm_for_sections",
         new_callable=AsyncMock,
         return_value=MOCK_LLM_RESPONSE,
     ):
@@ -76,7 +76,7 @@ async def test_parse_sections_maps_section_types():
 async def test_parse_sections_preserves_text():
     """Verify section text is sliced locally from the original document with full coverage."""
     with patch(
-        "app.services.extraction.section_parser._call_gemini_for_sections",
+        "app.services.extraction.section_parser._call_llm_for_sections",
         new_callable=AsyncMock,
         return_value=MOCK_LLM_RESPONSE,
     ):
@@ -113,7 +113,7 @@ async def test_parse_sections_unknown_type_falls_back_to_other():
         ],
     }
     with patch(
-        "app.services.extraction.section_parser._call_gemini_for_sections",
+        "app.services.extraction.section_parser._call_llm_for_sections",
         new_callable=AsyncMock,
         return_value=response,
     ):
@@ -142,7 +142,7 @@ async def test_parse_sections_empty_text_returns_single_other_section():
 async def test_parse_sections_handles_llm_error_gracefully():
     """Exception from Gemini returns single OTHER section with full text."""
     with patch(
-        "app.services.extraction.section_parser._call_gemini_for_sections",
+        "app.services.extraction.section_parser._call_llm_for_sections",
         new_callable=AsyncMock,
         side_effect=RuntimeError("Gemini API unavailable"),
     ):

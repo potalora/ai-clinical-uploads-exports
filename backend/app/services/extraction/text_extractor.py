@@ -80,6 +80,10 @@ def extract_text_from_rtf(file_path: Path) -> str:
 
 async def _extract_text_from_pdf_gemini(file_path: Path, api_key: str) -> str:
     """Extract text from PDF by sending bytes to Gemini 3 Flash."""
+    if not api_key:
+        raise ValueError(
+            "Vision OCR requires GEMINI_API_KEY (vision is Gemini-only regardless "
+            "of LLM_PROVIDER).")
     client = genai.Client(api_key=api_key)
     with open(file_path, "rb") as f:
         pdf_bytes = f.read()
@@ -113,6 +117,10 @@ async def extract_text_from_pdf(file_path: Path, api_key: str) -> str:
 
 async def extract_text_from_tiff(file_path: Path, api_key: str) -> str:
     """Extract text from TIFF image via Gemini 3 Flash OCR."""
+    if not api_key:
+        raise ValueError(
+            "Vision OCR requires GEMINI_API_KEY (vision is Gemini-only regardless "
+            "of LLM_PROVIDER).")
     client = genai.Client(api_key=api_key)
     img = Image.open(file_path)
 

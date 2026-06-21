@@ -43,6 +43,8 @@ class GenerateSummaryRequest(BaseModel):
     output_format: str = "natural_language"  # "natural_language", "json", "both"
     custom_system_prompt: str | None = None
     custom_user_prompt: str | None = None
+    provider: str | None = None
+    model: str | None = None
 
 
 class DuplicateWarning(BaseModel):

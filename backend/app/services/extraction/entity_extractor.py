@@ -143,7 +143,21 @@ async def extract_entities_async(
     api_key: str,
     progress_callback: Callable[[str, int, int], None] | None = None,
 ) -> ExtractionResult:
-    """Async wrapper around synchronous LangExtract call."""
-    return await asyncio.to_thread(
-        extract_entities, text, source_file, api_key, progress_callback
+    """Async entity extraction.
+
+    Gemini/Vertex route through the synchronous LangExtract call (as today);
+    any other configured LLM provider delegates to the provider-agnostic JSON
+    extraction path. ``provider_name_for`` is imported lazily to avoid an import
+    cycle with the LLM registry.
+    """
+    from app.services.ai.llm.registry import provider_name_for
+
+    if provider_name_for("extraction") in ("gemini", "vertex"):
+        return await asyncio.to_thread(
+            extract_entities, text, source_file, api_key, progress_callback
+        )
+    from app.services.extraction.generic_entity_extractor import (
+        generic_extract_entities_async,
     )
+
+    return await generic_extract_entities_async(text, source_file, progress_callback)
