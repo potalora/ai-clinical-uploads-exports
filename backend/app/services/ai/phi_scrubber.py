@@ -36,8 +36,8 @@ PATTERNS = {
         ),
         "[LOCATION]",
     ),
-    # Slash dates (MM/DD/YYYY) are generalized to MM/YYYY below (not a fixed
-    # token), so they are handled separately from these replacement patterns.
+    # Slash dates (MM/DD/YYYY) are generalized to the year only below (not a
+    # fixed token), so they are handled separately from these replacement patterns.
     "account": (
         re.compile(
             # The trailing [:\s#*]* tolerates markdown the OCR sometimes emits
@@ -65,6 +65,38 @@ PATTERNS = {
         "[HEALTH_PLAN]",
     ),
 }
+
+# --- Date generalization (HIPAA Safe Harbor: keep YEAR ONLY) -----------------
+# Safe Harbor permits the four-digit year of a date related to an individual but
+# NOT the month or day. Every recognized date format below collapses to its year
+# only (month + day dropped). Dates are handled separately from PATTERNS because
+# the replacement is data-dependent (the captured year), not a fixed token.
+_MONTHS = (
+    r"(?:January|February|March|April|May|June|July|August|September|"
+    r"October|November|December)"
+)
+# "July 14, 2023" / "July 14 2023" -> year (group 1)
+_MONTH_FIRST_DATE = re.compile(
+    rf"\b{_MONTHS}\s+\d{{1,2}},?\s+(\d{{4}})\b", re.IGNORECASE
+)
+# "14 July 2023" -> year (group 1)
+_DAY_FIRST_DATE = re.compile(
+    rf"\b\d{{1,2}}\s+{_MONTHS}\s+(\d{{4}})\b", re.IGNORECASE
+)
+# ISO "2023-07-14" / "2023/07/14" -> year (group 1)
+_ISO_DATE = re.compile(
+    r"\b(\d{4})[-/](?:0?[1-9]|1[0-2])[-/](?:0?[1-9]|[12]\d|3[01])\b"
+)
+# US slash "07/14/2023" / "7/4/2023" -> year (group 1, the 4-digit year)
+_SLASH_DATE = re.compile(
+    r"\b(?:0?[1-9]|1[0-2])/(?:0?[1-9]|[12]\d|3[01])/(\d{4})\b"
+)
+
+# --- Age generalization (HIPAA Safe Harbor: ages > 89 aggregate to "90+") ----
+# "95-year-old" / "95 year old" — the leading number is group 1.
+_AGE_YEAROLD = re.compile(r"\b(\d{1,3})[\s-]year[\s-]old\b", re.IGNORECASE)
+# "age 95" / "aged 95" / "age: 95" — prefix is group 1, the number is group 2.
+_AGE_PHRASE = re.compile(r"\b(aged?[:\s]+)(\d{1,3})\b", re.IGNORECASE)
 
 
 def scrub_phi(
@@ -144,29 +176,45 @@ def scrub_phi(
             report[report_key] = len(matches)
             scrubbed = pattern.sub(replacement, scrubbed)
 
-    # Generalize specific dates to month/year
-    date_pattern = re.compile(
-        r"\b(?:January|February|March|April|May|June|July|August|September|October|November|December)"
-        r"\s+\d{1,2},?\s+\d{4}\b",
-        re.IGNORECASE,
-    )
-    date_matches = date_pattern.findall(scrubbed)
-    if date_matches:
-        report["dates_generalized"] = len(date_matches)
-        for m in date_matches:
-            parts = re.split(r"[\s,]+", m)
-            if len(parts) >= 3:
-                scrubbed = scrubbed.replace(m, f"{parts[0]} {parts[-1]}")
+    # Generalize specific dates to YEAR ONLY. HIPAA Safe Harbor permits the
+    # four-digit year but NOT the month or day for dates related to an
+    # individual, so we drop everything but the year. Covers month-name dates in
+    # both orders, ISO (YYYY-MM-DD / YYYY/MM/DD), and US slash (MM/DD/YYYY).
+    # Order matters: ISO runs before US slash so "2023/07/14" is taken as ISO.
+    n_dates = 0
+    scrubbed, n = _MONTH_FIRST_DATE.subn(lambda m: m.group(1), scrubbed)
+    n_dates += n
+    scrubbed, n = _DAY_FIRST_DATE.subn(lambda m: m.group(1), scrubbed)
+    n_dates += n
+    scrubbed, n = _ISO_DATE.subn(lambda m: m.group(1), scrubbed)
+    n_dates += n
+    scrubbed, n = _SLASH_DATE.subn(lambda m: m.group(1), scrubbed)
+    n_dates += n
+    if n_dates:
+        report["dates_generalized"] = report.get("dates_generalized", 0) + n_dates
 
-    # Generalize slash dates MM/DD/YYYY -> MM/YYYY (drop the most-identifying
-    # day), mirroring the month-name handling above. Lab reports carry DOB and
-    # collection/report dates in this format; the day is a HIPAA date element.
-    slash_date = re.compile(
-        r"\b(0?[1-9]|1[0-2])/(?:0?[1-9]|[12]\d|3[01])/(\d{4})\b"
-    )
-    scrubbed, n_slash = slash_date.subn(r"\1/\2", scrubbed)
-    if n_slash:
-        report["dates_generalized"] = report.get("dates_generalized", 0) + n_slash
+    # Generalize ages over 89 to "90+" (Safe Harbor aggregates all ages >89 into
+    # a single category; the exact age is otherwise an identifier).
+    ages_capped = 0
+
+    def _cap_yearold(m: re.Match) -> str:
+        nonlocal ages_capped
+        if int(m.group(1)) > 89:
+            ages_capped += 1
+            return m.group(0).replace(m.group(1), "90+", 1)
+        return m.group(0)
+
+    def _cap_phrase(m: re.Match) -> str:
+        nonlocal ages_capped
+        if int(m.group(2)) > 89:
+            ages_capped += 1
+            return f"{m.group(1)}90+"
+        return m.group(0)
+
+    scrubbed = _AGE_YEAROLD.sub(_cap_yearold, scrubbed)
+    scrubbed = _AGE_PHRASE.sub(_cap_phrase, scrubbed)
+    if ages_capped:
+        report["ages_generalized"] = report.get("ages_generalized", 0) + ages_capped
 
     # NER pass: redact free-text person names the patterns/known-identifier
     # passes can't catch (providers, family members). Runs last, after known

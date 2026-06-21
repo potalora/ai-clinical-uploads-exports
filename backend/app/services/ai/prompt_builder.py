@@ -139,7 +139,8 @@ def _format_record(record: HealthRecord) -> str:
     parts = [f"[{record.record_type.upper()}] {record.display_text}"]
 
     if record.effective_date:
-        parts.append(f"Date: {record.effective_date.strftime('%Y-%m')}")
+        # HIPAA Safe Harbor: emit the year only (month/day are date elements).
+        parts.append(f"Date: {record.effective_date.strftime('%Y')}")
 
     if record.status:
         parts.append(f"Status: {record.status}")
