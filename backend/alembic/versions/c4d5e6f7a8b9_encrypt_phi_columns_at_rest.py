@@ -72,9 +72,9 @@ def _encrypt_column(conn, table: str, col: str, is_json: bool, not_null: bool) -
         plaintext = json.dumps(value) if is_json else str(value)
         conn.execute(
             sa.text(f"UPDATE {table} SET {tmp} = :v WHERE id = :id").bindparams(
-                sa.bindparam("v", value=encrypt_field(plaintext), type_=sa.LargeBinary())
+                sa.bindparam("v", type_=sa.LargeBinary())
             ),
-            {"id": row.id},
+            {"v": encrypt_field(plaintext), "id": row.id},
         )
 
     op.drop_column(table, col)
@@ -98,9 +98,9 @@ def _decrypt_column(conn, table: str, col: str, is_json: bool, not_null: bool) -
         restored = json.loads(plaintext) if is_json else plaintext
         conn.execute(
             sa.text(f"UPDATE {table} SET {tmp} = :v WHERE id = :id").bindparams(
-                sa.bindparam("v", value=restored, type_=sa_type)
+                sa.bindparam("v", type_=sa_type)
             ),
-            {"id": row.id},
+            {"v": restored, "id": row.id},
         )
 
     op.drop_column(table, col)
