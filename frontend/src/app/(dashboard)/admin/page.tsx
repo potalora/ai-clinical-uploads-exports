@@ -2227,7 +2227,7 @@ const OP_COPY: Record<string, string> = {
 // select sits above it). `vision` and `section` are model-only knobs.
 const ADVANCED_OPS = ["summary", "extraction", "vision", "dedup", "section"] as const;
 
-type RoutingOp = "default" | (typeof ADVANCED_OPS)[number];
+type RoutingOp = "default" | "extraction_engine" | (typeof ADVANCED_OPS)[number];
 type TestState = ProviderTestResult | { pending: true };
 
 function LlmProvidersCard() {
@@ -2455,6 +2455,40 @@ function LlmProvidersCard() {
                   </select>
                 </div>
               ))}
+
+              {/* Extraction engine — local vs cloud, paired with the extraction
+                  provider select above (engine = local-vs-cloud; provider = which
+                  cloud). */}
+              <div
+                className="field"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 16,
+                }}
+              >
+                <div>
+                  <div className="field-l" style={{ marginBottom: 6 }}>
+                    Extraction engine
+                  </div>
+                  <div className="field-v" style={{ padding: 0 }}>
+                    On-device keeps records on this machine. Hybrid sends only the
+                    hard sections to the cloud extraction provider. Cloud sends
+                    de-identified text to it.
+                  </div>
+                </div>
+                <select
+                  className="selectbox"
+                  aria-label="Extraction engine"
+                  value={settings.routing.extraction_engine || "hybrid"}
+                  onChange={(e) => onRoutingChange("extraction_engine", e.target.value)}
+                >
+                  <option value="local">On-device (private)</option>
+                  <option value="hybrid">Hybrid (local + cloud escalation)</option>
+                  <option value="gemini">Cloud</option>
+                </select>
+              </div>
             </div>
           </details>
 

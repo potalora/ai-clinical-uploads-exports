@@ -1286,7 +1286,11 @@ async def _process_unstructured(upload_id: UUID, file_path: Path, user_id: UUID)
             # runs the LangExtract/Gemini path below unchanged. "local"/"hybrid"
             # run the on-device medspaCy + scispaCy fast-path, escalating only
             # hard sections to Gemini (hybrid). Flag default-OFF until validated.
-            engine = _resolve_extraction_engine(settings.extraction_engine)
+            # Prefer the user's saved engine choice (Admin -> AI providers),
+            # falling back to the global default.
+            engine = _resolve_extraction_engine(
+                config.extraction_engine or settings.extraction_engine
+            )
 
             if engine in ("local", "hybrid"):
                 local_out = await _run_local_extraction_engine(
