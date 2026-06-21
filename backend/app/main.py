@@ -22,6 +22,20 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def build_cors_config(cors_origins: str) -> tuple[list[str], bool]:
+    """Parse ``CORS_ORIGINS`` into a clean origin list + a safe credentials flag.
+
+    Strips whitespace around each origin (so ``"a, b"`` works) and drops empties.
+    The CORS spec forbids the wildcard origin together with credentials — browsers
+    reject ``Access-Control-Allow-Origin: *`` when credentials are allowed — so if
+    the configured origins include ``*`` we DISABLE credentials rather than emit
+    an unusable/insecure combination (SEC-API-05).
+    """
+    origins = [o.strip() for o in cors_origins.split(",") if o.strip()]
+    allow_credentials = "*" not in origins
+    return origins, allow_credentials
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup/shutdown lifecycle handler."""
@@ -126,13 +140,43 @@ def create_app() -> FastAPI:
     # route status for real requests.
     app.add_middleware(AuditMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
+    cors_origins, cors_allow_credentials = build_cors_config(settings.cors_origins)
+    if not cors_allow_credentials:
+        logger.warning(
+            "CORS_ORIGINS contains '*'; disabling allow_credentials "
+            "(a wildcard origin with credentials is rejected by browsers)."
+        )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origins.split(","),
-        allow_credentials=True,
+        allow_origins=cors_origins,
+        allow_credentials=cors_allow_credentials,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "Accept"],
     )
+
+    # Transport security (W19 / CRYPTO-04). PRODUCTION ONLY — gated on
+    # is_production so local dev/tests (http on 127.0.0.1) are never redirected or
+    # host-rejected, which would break the whole suite. Added LAST so they are the
+    # OUTERMOST middleware: an untrusted Host is rejected, and a plain-http request
+    # is redirected to https, before any other processing runs.
+    #
+    # NOTE: HTTPSRedirectMiddleware redirects when the OBSERVED scheme is not
+    # https. Behind a TLS-terminating proxy run uvicorn with --proxy-headers (and
+    # a trusted --forwarded-allow-ips) so X-Forwarded-Proto rewrites the scheme to
+    # https; otherwise it will loop. The redirect target is governed by the proxy.
+    if settings.is_production:
+        from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
+        from starlette.middleware.trustedhost import TrustedHostMiddleware
+
+        app.add_middleware(HTTPSRedirectMiddleware)
+        app.add_middleware(
+            TrustedHostMiddleware,
+            allowed_hosts=settings.allowed_hosts_list,
+        )
+
+        ssl_warning = settings.database_ssl_warning()
+        if ssl_warning:
+            logger.warning(ssl_warning)
 
     app.include_router(api_router)
 

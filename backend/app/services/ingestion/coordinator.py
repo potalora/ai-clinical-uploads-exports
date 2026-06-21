@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import logging
 import shutil
 import zipfile
@@ -10,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
 
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,6 +29,118 @@ from app.services.ingestion.patient_demographics import (
 from app.services.ingestion.xdm_parser import parse_xdm_metadata
 
 logger = logging.getLogger(__name__)
+
+# --- SEC-DOS-02: zip-bomb defenses ---------------------------------------
+#
+# The upload size limits only bound the COMPRESSED archive; a tiny zip can
+# declare/inflate to many gigabytes (the classic "zip bomb"). These caps bound
+# the DECOMPRESSED output instead, and are enforced both up front (declared
+# header totals) and while streaming each member (the header can lie). They are
+# module-level so tests can tighten them without a multi-GB fixture.
+_ZIP_MAX_ENTRIES = 100_000
+_ZIP_MAX_MEMBER_UNCOMPRESSED_BYTES = 4 * 1024 * 1024 * 1024  # 4 GiB / member
+_ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES = 50 * 1024 * 1024 * 1024  # 50 GiB total
+_ZIP_MAX_COMPRESSION_RATIO = 100.0  # reject members inflating > 100x
+_ZIP_EXTRACT_CHUNK = 1024 * 1024  # 1 MiB streaming chunk
+
+
+def _zip_safe_target(temp_dir: Path, member_name: str) -> Path | None:
+    """Resolve a zip member to a path inside ``temp_dir``, or None if it escapes.
+
+    Defends against zip-slip (``../`` / absolute paths) by rejecting any member
+    whose resolved path is not contained within the extraction directory.
+    """
+    target = (temp_dir / member_name).resolve()
+    base = temp_dir.resolve()
+    try:
+        target.relative_to(base)
+    except ValueError:
+        logger.warning("Skipping zip member outside extract dir: %s", member_name)
+        return None
+    return target
+
+
+def _safe_extract_zip(zf: zipfile.ZipFile, temp_dir: Path) -> None:
+    """Extract a zip member-by-member with zip-bomb defenses (SEC-DOS-02).
+
+    Replaces ``zf.extractall`` (which has no decompression cap). First rejects up
+    front on the declared totals — member count, per-member size, per-member
+    compression ratio, and the summed uncompressed size — then extracts each
+    member streaming its bytes and re-checking the byte budget against the actual
+    decompressed output (header sizes can be forged). Raises ``HTTPException``
+    (413/400) on any breach so the upload endpoint returns a clean rejection.
+    """
+    infos = [i for i in zf.infolist() if not i.is_dir()]
+
+    if len(infos) > _ZIP_MAX_ENTRIES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"ZIP has too many entries (>{_ZIP_MAX_ENTRIES})",
+        )
+
+    declared_total = 0
+    for info in infos:
+        if info.file_size > _ZIP_MAX_MEMBER_UNCOMPRESSED_BYTES:
+            raise HTTPException(status_code=413, detail="ZIP member too large")
+        if info.compress_size > 0:
+            ratio = info.file_size / info.compress_size
+            if ratio > _ZIP_MAX_COMPRESSION_RATIO:
+                raise HTTPException(
+                    status_code=413, detail="ZIP compression ratio too high (suspected zip bomb)"
+                )
+        declared_total += info.file_size
+    if declared_total > _ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES:
+        raise HTTPException(
+            status_code=413, detail="ZIP uncompressed size exceeds the allowed budget"
+        )
+
+    # Stream each member, enforcing the REAL decompressed byte budget — the
+    # declared sizes above can lie, so count actual bytes as we write.
+    extracted_total = 0
+    for info in infos:
+        target = _zip_safe_target(temp_dir, info.filename)
+        if target is None:
+            continue  # zip-slip — skip defensively
+        target.parent.mkdir(parents=True, exist_ok=True)
+        member_bytes = 0
+        with zf.open(info, "r") as src, open(target, "wb") as dst:
+            while True:
+                chunk = src.read(_ZIP_EXTRACT_CHUNK)
+                if not chunk:
+                    break
+                member_bytes += len(chunk)
+                extracted_total += len(chunk)
+                if member_bytes > _ZIP_MAX_MEMBER_UNCOMPRESSED_BYTES:
+                    raise HTTPException(status_code=413, detail="ZIP member too large")
+                if extracted_total > _ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail="ZIP uncompressed size exceeds the allowed budget",
+                    )
+                dst.write(chunk)
+
+
+def _find_patient_resource_streaming(file_path: Path) -> dict | None:
+    """Locate the first Patient resource in a FHIR bundle by streaming (ijson).
+
+    SEC-INJ-03: avoids ``json.load``-ing the entire (up to 500MB) bundle into RAM
+    just to read the patient demographics — that negated the streaming the bundle
+    parser already uses. Fail-open: a malformed / non-bundle file yields ``None``
+    and ingestion proceeds with the default patient.
+    """
+    import ijson
+
+    try:
+        with open(file_path, "rb") as f:
+            for entry in ijson.items(f, "entry.item"):
+                if not isinstance(entry, dict):
+                    continue
+                resource = entry.get("resource")
+                if isinstance(resource, dict) and resource.get("resourceType") == "Patient":
+                    return resource
+    except Exception as e:  # noqa: BLE001 - fail-open; never block ingestion
+        logger.warning("Streaming Patient lookup failed for %s: %s", file_path, e)
+    return None
 
 
 async def get_or_create_patient(
@@ -253,17 +365,13 @@ async def _ingest_fhir(
     file_path: Path,
 ) -> dict:
     """Ingest a FHIR R4 JSON file."""
-    # Check if bundle contains a Patient resource
-    with open(file_path, "r", encoding="utf-8-sig") as f:
-        data = json.load(f)
-
-    if data.get("resourceType") == "Bundle":
-        for entry in data.get("entry", []):
-            resource = entry.get("resource", {})
-            if resource.get("resourceType") == "Patient":
-                patient = await get_or_create_patient(db, user_id, resource)
-                patient_id = patient.id
-                break
+    # SEC-INJ-03: locate the bundle's Patient by streaming (ijson) instead of
+    # json.load-ing the whole (up to 500MB) bundle into RAM, which defeated the
+    # streaming the parser already uses.
+    patient_resource = _find_patient_resource_streaming(file_path)
+    if patient_resource is not None:
+        patient = await get_or_create_patient(db, user_id, patient_resource)
+        patient_id = patient.id
 
     return await parse_fhir_bundle(
         file_path=file_path,
@@ -468,7 +576,8 @@ async def _ingest_zip(
 
     try:
         with zipfile.ZipFile(zip_path, "r") as zf:
-            zf.extractall(temp_dir)
+            # SEC-DOS-02: bounded, member-by-member extraction (zip-bomb guard).
+            _safe_extract_zip(zf, temp_dir)
 
         # Check for IHE XDM package first
         metadata_path = _find_xdm_metadata(temp_dir)

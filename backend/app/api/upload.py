@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 import shutil
 from datetime import datetime, timedelta, timezone
@@ -265,6 +264,77 @@ MAGIC_BYTES = {
 }
 
 
+# SEC-DOS-01: stream uploads to disk in bounded chunks instead of buffering the
+# whole body into a single in-memory ``bytes``. A 1 MiB chunk keeps peak RAM per
+# in-flight upload tiny regardless of the configured ceiling (up to 5 GB for Epic
+# exports), which would otherwise OOM a 16 GB host.
+UPLOAD_CHUNK_SIZE = 1024 * 1024
+
+
+def _reject_if_content_length_exceeds(
+    request: Request | None, max_bytes: int, detail: str
+) -> None:
+    """Reject up front when the declared ``Content-Length`` exceeds the cap.
+
+    A cheap pre-check (no body I/O) so an obviously-oversized upload is refused
+    before we stream it. A missing/malformed header falls through to the
+    streaming byte-budget enforcement, which is authoritative.
+    """
+    if request is None:
+        return
+    declared = request.headers.get("content-length")
+    if not declared:
+        return
+    try:
+        declared_bytes = int(declared)
+    except (TypeError, ValueError):
+        return
+    if declared_bytes > max_bytes:
+        raise HTTPException(status_code=413, detail=detail)
+
+
+async def _stream_upload_to_disk(
+    file: UploadFile,
+    file_path: Path,
+    max_bytes: int,
+    *,
+    request: Request | None = None,
+    detail: str = "File too large",
+) -> tuple[int, bytes]:
+    """Stream an ``UploadFile`` to ``file_path`` in chunks, enforcing a hard cap.
+
+    Rejects early on an oversized declared ``Content-Length``, then copies the
+    body one ``UPLOAD_CHUNK_SIZE`` chunk at a time while tracking a running total
+    — aborting and unlinking the partial file the moment the total exceeds
+    ``max_bytes`` (SEC-DOS-01: never materialize the whole body in RAM).
+
+    Returns ``(bytes_written, header)`` where ``header`` is the first chunk's
+    leading bytes, so callers can validate magic bytes without re-reading.
+    """
+    _reject_if_content_length_exceeds(request, max_bytes, detail)
+
+    total = 0
+    header = b""
+    try:
+        with open(file_path, "wb") as f:
+            while True:
+                chunk = await file.read(UPLOAD_CHUNK_SIZE)
+                if not chunk:
+                    break
+                if not header:
+                    header = chunk[:16]
+                total += len(chunk)
+                if total > max_bytes:
+                    raise HTTPException(status_code=413, detail=detail)
+                f.write(chunk)
+    except BaseException:
+        # Drop any partial file on rejection/error so a too-large upload leaves
+        # nothing behind on disk.
+        file_path.unlink(missing_ok=True)
+        raise
+    return total, header
+
+
 def _validate_magic_bytes(content: bytes, ext: str) -> bool:
     """Validate file content matches expected magic bytes for the extension."""
     expected = MAGIC_BYTES.get(ext)
@@ -337,6 +407,7 @@ def _collect_entities(results: list, total_chunks: int) -> tuple[list, int]:
 async def upload_file(
     file: UploadFile,
     background_tasks: BackgroundTasks,
+    request: Request,
     user_id: UUID = Depends(get_authenticated_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> UploadResponse:
@@ -348,11 +419,9 @@ async def upload_file(
     upload_dir.mkdir(parents=True, exist_ok=True)
 
     file_path = _safe_file_path(upload_dir, user_id, file.filename)
-    with open(file_path, "wb") as f:
-        content = await file.read()
-        if len(content) > settings.max_file_size_mb * 1024 * 1024:
-            raise HTTPException(status_code=413, detail="File too large")
-        f.write(content)
+    await _stream_upload_to_disk(
+        file, file_path, settings.max_file_size_mb * 1024 * 1024, request=request
+    )
 
     # Run ingestion synchronously for now (small files)
     from app.services.ingestion.coordinator import ingest_file
@@ -386,6 +455,7 @@ async def upload_file(
 @router.post("/epic-export", response_model=UploadResponse, status_code=status.HTTP_202_ACCEPTED)
 async def upload_epic_export(
     file: UploadFile,
+    request: Request,
     user_id: UUID = Depends(get_authenticated_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> UploadResponse:
@@ -396,17 +466,16 @@ async def upload_epic_export(
     upload_dir = Path(settings.upload_dir)
     upload_dir.mkdir(parents=True, exist_ok=True)
 
+    # C6 + SEC-DOS-01: stream to disk under the Epic export ceiling instead of
+    # buffering up to 5 GB into RAM, rejecting early on Content-Length.
     file_path = _safe_file_path(upload_dir, user_id, file.filename)
-    with open(file_path, "wb") as f:
-        content = await file.read()
-        # C6: Size check for epic exports
-        max_bytes = settings.max_epic_export_size_mb * 1024 * 1024
-        if len(content) > max_bytes:
-            raise HTTPException(
-                status_code=413,
-                detail=f"Epic export too large. Maximum size: {settings.max_epic_export_size_mb}MB",
-            )
-        f.write(content)
+    await _stream_upload_to_disk(
+        file,
+        file_path,
+        settings.max_epic_export_size_mb * 1024 * 1024,
+        request=request,
+        detail=f"Epic export too large. Maximum size: {settings.max_epic_export_size_mb}MB",
+    )
 
     from app.services.ingestion.coordinator import ingest_file
 
@@ -1388,6 +1457,7 @@ async def _process_unstructured(upload_id: UUID, file_path: Path, user_id: UUID)
 )
 async def upload_unstructured(
     file: UploadFile,
+    request: Request,
     user_id: UUID = Depends(get_authenticated_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> UnstructuredUploadResponse:
@@ -1405,22 +1475,23 @@ async def upload_unstructured(
     upload_dir = Path(settings.upload_dir)
     upload_dir.mkdir(parents=True, exist_ok=True)
 
+    # SEC-DOS-01: stream the body to disk in bounded chunks (reject early on an
+    # oversized Content-Length), then validate/hash from disk.
     file_path = _safe_file_path(upload_dir, user_id, file.filename)
-    content = await file.read()
-    if len(content) > settings.max_file_size_mb * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="File too large")
+    file_size, header = await _stream_upload_to_disk(
+        file, file_path, settings.max_file_size_mb * 1024 * 1024, request=request
+    )
 
-    # M1: Validate magic bytes
-    if not _validate_magic_bytes(content, ext):
+    # M1: Validate magic bytes (against the streamed header, not the whole body).
+    if not _validate_magic_bytes(header, ext):
+        file_path.unlink(missing_ok=True)
         raise HTTPException(
             status_code=400,
             detail=f"File content does not match expected format for {ext}",
         )
 
-    with open(file_path, "wb") as f:
-        f.write(content)
-
-    file_hash = hashlib.sha256(content).hexdigest()
+    from app.services.ingestion.coordinator import compute_file_hash
+    file_hash = compute_file_hash(file_path)
 
     from app.services.ingestion.reextraction import find_prior_extracted_upload
     prior = await find_prior_extracted_upload(db, user_id, file_hash)
@@ -1430,7 +1501,7 @@ async def upload_unstructured(
         user_id=user_id,
         filename=file.filename,
         mime_type=file.content_type or "application/octet-stream",
-        file_size_bytes=len(content),
+        file_size_bytes=file_size,
         file_hash=file_hash,
         storage_path=str(file_path),
         ingestion_status="duplicate_file" if prior else "pending_extraction",
@@ -1478,6 +1549,7 @@ async def upload_unstructured_batch(
 ) -> BatchUploadResponse:
     """Upload multiple unstructured files for concurrent processing."""
     from app.services.extraction.text_extractor import detect_file_type
+    from app.services.ingestion.coordinator import compute_file_hash
     from app.services.ingestion.reextraction import find_prior_extracted_upload
 
     upload_dir = Path(settings.upload_dir)
@@ -1493,17 +1565,20 @@ async def upload_unstructured_batch(
             continue
 
         file_path = _safe_file_path(upload_dir, user_id, file.filename)
-        content = await file.read()
-        if len(content) > settings.max_file_size_mb * 1024 * 1024:
+        # SEC-DOS-01: stream each file to disk under the size cap; oversize files
+        # abort + unlink and are silently skipped (batch is best-effort).
+        try:
+            file_size, header = await _stream_upload_to_disk(
+                file, file_path, settings.max_file_size_mb * 1024 * 1024
+            )
+        except HTTPException:
             continue
 
-        if not _validate_magic_bytes(content, ext):
+        if not _validate_magic_bytes(header, ext):
+            file_path.unlink(missing_ok=True)
             continue
 
-        with open(file_path, "wb") as f:
-            f.write(content)
-
-        file_hash = hashlib.sha256(content).hexdigest()
+        file_hash = compute_file_hash(file_path)
         prior = await find_prior_extracted_upload(db, user_id, file_hash)
 
         upload_record = UploadedFile(
@@ -1511,7 +1586,7 @@ async def upload_unstructured_batch(
             user_id=user_id,
             filename=file.filename,
             mime_type=file.content_type or "application/octet-stream",
-            file_size_bytes=len(content),
+            file_size_bytes=file_size,
             file_hash=file_hash,
             storage_path=str(file_path),
             ingestion_status="duplicate_file" if prior else "pending_extraction",
