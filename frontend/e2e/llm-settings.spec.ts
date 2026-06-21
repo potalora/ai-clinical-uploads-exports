@@ -256,6 +256,33 @@ test.describe("AI providers card (Admin → System)", () => {
     await expect(page.getByText("sk-openai-secret-9999")).toHaveCount(0);
   });
 
+  test("Extraction-engine select renders and PUTs routing with extraction_engine", async ({
+    page,
+  }) => {
+    await mockBackend(page);
+    await page.goto("/admin?tab=sys");
+
+    await expect(page.getByLabel("Default AI provider")).toBeVisible();
+
+    // The engine selector lives under the Advanced disclosure, beside the
+    // per-operation extraction provider select.
+    await page.getByText("Advanced — route each operation").click();
+
+    const engine = page.getByLabel("Extraction engine");
+    await expect(engine).toBeVisible();
+    // Defaults to the mocked routing value.
+    await expect(engine).toHaveValue("hybrid");
+
+    const routingPromise = page.waitForRequest(
+      (r) => r.method() === "PUT" && r.url().includes("/settings/llm/routing")
+    );
+
+    await engine.selectOption("local");
+
+    const routingReq = await routingPromise;
+    expect(routingReq.postDataJSON()).toMatchObject({ extraction_engine: "local" });
+  });
+
   test("changing the default select PUTs routing", async ({ page }) => {
     await mockBackend(page);
     await page.goto("/admin?tab=sys");
