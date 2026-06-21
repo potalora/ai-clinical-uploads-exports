@@ -84,9 +84,17 @@ Condition, Observation, MedicationRequest, MedicationStatement, AllergyIntoleran
 
 ## Coding and cleanup
 
-As records come in, MedTimeline tries to attach a standard code to each one: RxNorm for medications, ICD-10-CM for conditions, LOINC for the common labs. The vocabularies are bundled and matched locally, so no terminology lookups leave your machine. The medication list refreshes itself from RxNorm on startup and about once a week, and falls back to the copy committed in the repo when there's no network. SNOMED and CPT aren't included (they aren't freely redistributable), so procedures get a local label instead. Anything the vocabularies don't recognize stays uncoded rather than guessed.
+As records come in, MedTimeline tries to attach a standard code to each one: RxNorm for medications, ICD-10-CM for conditions, LOINC for the common labs. The vocabularies are bundled and matched locally, so no terminology lookups leave your machine. The medication list refreshes itself from RxNorm on startup and about once a week, and falls back to the copy committed in the repo when there's no network. SNOMED and CPT aren't included (they aren't freely redistributable), so procedures get a local label instead. Anything the vocabularies don't recognize stays uncoded rather than guessed. Close-but-not-exact names still resolve through a fuzzy match (RapidFuzz, on a tight threshold), so a typo or a brand/generic variant lands on the right code without risking a wrong one.
 
 Extraction from documents also drops obvious noise before anything is stored: bare measurements like "2mg", procedures only mentioned in passing rather than performed, PHI placeholders left behind by the scrubber. The point is to keep the timeline made of real records, not fragments.
+
+## Extraction engine
+
+Pulling clinical facts out of a document can run three ways, set by `EXTRACTION_ENGINE`: `gemini` (cloud), `local` (on-device clinical NLP: medspaCy for sections and negation, scispaCy for the named entities, nothing leaving the machine), or `hybrid`, the default, which runs local first and sends only the sections it's unsure about to Gemini. Local and hybrid need the optional `clinical-nlp` extra; without it, or with `EXTRACTION_ENGINE=gemini`, it falls back to the cloud path on its own. On structured documents the local pass is a lot faster and keeps PHI on the machine.
+
+## On the timeline
+
+Each row carries a small preview computed server-side: the value and unit, a neutral status chip, a reference gauge for labs, a couple of key facets, so a lab or a medication reads at a glance before you open it. Open an encounter and a "From this visit" panel lists the records pulled from the same note, the labs ordered, the meds started, each linking back to its own detail.
 
 ## AI modes
 
@@ -132,7 +140,7 @@ erDiagram
 
 ## Tech stack
 
-**Backend**: Python 3.12 / FastAPI / SQLAlchemy 2 async / PostgreSQL 16 / Alembic / Gemini API / LangExtract / spaCy (PHI NER) / python-fhir-converter
+**Backend**: Python 3.12 / FastAPI / SQLAlchemy 2 async / PostgreSQL 16 / Alembic / Gemini API / LangExtract / spaCy (PHI NER) / RapidFuzz (fuzzy coding + dedup) / fhir.resources (structural validation) / python-fhir-converter. The optional `clinical-nlp` extra adds scispaCy + medspaCy for on-device extraction (no PyTorch).
 
 **Frontend**: Next.js 15 / TypeScript / Tailwind CSS 4 / shadcn/ui / TanStack Query / Zustand. Auth is custom JWT — access + rotated refresh tokens in a Zustand store, with transparent 401 refresh in `lib/api.ts` (no auth framework).
 
@@ -182,6 +190,7 @@ cp .env.example .env
 # 3. backend
 cd backend && pip install -e ".[dev]"
 python -m spacy download en_core_web_md      # PHI name-redaction model
+pip install -e ".[clinical-nlp]"             # optional: on-device extraction (local/hybrid); skip for Gemini-only
 alembic upgrade head
 DATABASE_URL=postgresql+asyncpg://localhost:5432/medtimeline_test alembic upgrade head
 uvicorn app.main:app --reload --port 8000
@@ -197,14 +206,14 @@ cd frontend && npm install && npm run dev
 
 ```bash
 cd backend
-python -m pytest -m "not slow"        # ~1058 fast tests
+python -m pytest -m "not slow"        # ~1200 fast tests
 python -m pytest                       # everything — plain pytest includes the slow tests
 python -m pytest -m slow               # just the slow ones (need GEMINI_API_KEY + real data)
 python -m pytest tests/test_hipaa_compliance.py
 python -m pytest tests/fidelity/       # Epic / FHIR / CDA fidelity (skip without real fixtures)
 ```
 
-The fast suite is ~1058 tests across ~69 files, run against `medtimeline_test` (auto-derived from `DATABASE_URL`). There's no `--run-slow` flag — plain `pytest` already runs the slow tests, which hit the real Gemini API, so `-m "not slow"` is what you want day to day. Fidelity tests need real-data fixtures and skip when those are absent. A 120s per-test timeout backstops hangs in the fast suite; slow tests get a longer bound.
+The fast suite is ~1200 tests across ~70 files, run against `medtimeline_test` (auto-derived from `DATABASE_URL`). There's no `--run-slow` flag; plain `pytest` already runs the slow tests, which hit the real Gemini API, so `-m "not slow"` is what you want day to day. Fidelity tests need real-data fixtures and skip when those are absent; point `REAL_MEDICAL_FIXTURES_DIR` at a local corpus to run them. A 120s per-test timeout backstops hangs in the fast suite; slow tests get a longer bound.
 
 ## API
 
@@ -213,7 +222,7 @@ Full contract: [`docs/backend-handoff.md`](docs/backend-handoff.md)
 | Group | Endpoints |
 |-------|-----------|
 | **Auth** | `POST /auth/register` `/login` `/refresh` `/logout` `GET /auth/me` |
-| **Records** | `GET /records` (`?status=` `?sort=` `?order=`) `/records/:id` `/records/search` `/records/series` `/records/export` `DELETE /records/:id` |
+| **Records** | `GET /records` (`?status=` `?sort=` `?order=`) `/records/:id` `/records/:id/linked` `/records/search` `/records/series` `/records/export` `DELETE /records/:id` |
 | **Timeline** | `GET /timeline` |
 | **Dashboard** | `GET /dashboard/overview` `/labs` `/patients` `/sources` |
 | **Upload** | `POST /upload` `/upload/unstructured` `/unstructured-batch` `/trigger-extraction` `/upload/cancel` `DELETE /upload/:id` |
