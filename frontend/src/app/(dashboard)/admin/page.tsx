@@ -2394,7 +2394,10 @@ function LlmProvidersCard() {
 
       {loading ? (
         <RetroLoadingState text="Loading AI providers" />
-      ) : !settings ? (
+      ) : !settings || !settings.routing || !settings.providers ? (
+        // Guard against a partial/malformed /settings/llm response (e.g. a
+        // degraded backend returning {}): a missing routing/providers must
+        // degrade to this note, never throw and take down the whole Admin page.
         <p className="muted" style={{ fontSize: 13.5, padding: "12px 0", margin: 0 }}>
           AI provider settings are unavailable right now.
         </p>
