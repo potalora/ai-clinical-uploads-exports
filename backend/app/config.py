@@ -17,18 +17,43 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    @property
+    def is_production(self) -> bool:
+        """True unless APP_ENV is an explicit development value.
+
+        Fail-closed: anything other than a recognized dev value (including unset-as-
+        unknown, ``staging``, ``production``, typos) is treated as production so a
+        deploy that forgets ``APP_ENV`` does not silently run with insecure defaults.
+        The published container image also sets ``APP_ENV=production`` in its Dockerfile.
+        """
+        return self.app_env.strip().lower() not in {"development", "dev", "local", "test"}
+
     @model_validator(mode="after")
     def validate_production_secrets(self) -> "Settings":
-        """Fail fast if production is running with insecure defaults."""
-        if self.app_env != "development":
-            if self.jwt_secret_key == "change-me-in-production":
-                raise ValueError(
-                    "JWT_SECRET_KEY must be changed from default in non-development environments"
-                )
-            if not self.database_encryption_key:
-                raise ValueError(
-                    "DATABASE_ENCRYPTION_KEY must be set in non-development environments"
-                )
+        """Fail fast if production is running with weak or default secrets."""
+        if not self.is_production:
+            return self
+        if self.jwt_secret_key == "change-me-in-production":
+            raise ValueError(
+                "JWT_SECRET_KEY must be changed from the default in production"
+            )
+        if len(self.jwt_secret_key) < 32:
+            raise ValueError(
+                "JWT_SECRET_KEY must be at least 32 characters in production"
+            )
+        if not self.database_encryption_key:
+            raise ValueError("DATABASE_ENCRYPTION_KEY must be set in production")
+        try:
+            key_bytes = bytes.fromhex(self.database_encryption_key)
+        except ValueError as exc:
+            raise ValueError(
+                "DATABASE_ENCRYPTION_KEY must be valid hex (64 hex chars / 32 bytes)"
+            ) from exc
+        if len(key_bytes) != 32:
+            raise ValueError(
+                "DATABASE_ENCRYPTION_KEY must decode to exactly 32 bytes (64 hex chars) "
+                "to avoid a silent AES-128 downgrade"
+            )
         return self
 
     # Database
