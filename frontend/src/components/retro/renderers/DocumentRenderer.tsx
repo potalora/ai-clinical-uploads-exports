@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { safeHref } from "@/lib/safe-url";
 import { DetailRow, StatusBadge, BarRow, str, obj, arr, nested, formatDate } from "./shared";
 
 // Pull display/text out of a CodeableConcept (or its first coding).
@@ -144,20 +145,31 @@ export function DocumentRenderer({ r }: { r: Record<string, unknown> }) {
               .filter(Boolean)
               .join(" · ");
             if (!meta && !c.url) return null;
+            // SEC-FE-01: only http(s) attachment URLs become live links; an
+            // unsafe scheme (javascript:/data:/…) renders as inert text.
+            const safe = safeHref(c.url);
             return (
               <div key={i} className="min-w-0">
                 {meta && <span style={{ color: "var(--theme-text)" }}>{meta}</span>}
-                {c.url && (
-                  <a
-                    href={c.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block truncate font-mono text-[11px] underline"
-                    style={{ color: "var(--record-document-text)" }}
-                  >
-                    {c.url}
-                  </a>
-                )}
+                {c.url &&
+                  (safe ? (
+                    <a
+                      href={safe}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block truncate font-mono text-[11px] underline"
+                      style={{ color: "var(--record-document-text)" }}
+                    >
+                      {c.url}
+                    </a>
+                  ) : (
+                    <span
+                      className="block truncate font-mono text-[11px]"
+                      style={{ color: "var(--record-document-text)" }}
+                    >
+                      {c.url}
+                    </span>
+                  ))}
               </div>
             );
           })}
