@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
+
+# Hosts considered loopback / non-networked. A DB reachable only over loopback
+# carries no PHI across an untrusted network, so it does not require TLS.
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", ""})
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent  # backend/../..
 
@@ -56,7 +64,46 @@ class Settings(BaseSettings):
             )
         return self
 
+    @property
+    def allowed_hosts_list(self) -> list[str]:
+        """Parsed ``ALLOWED_HOSTS`` for Starlette's ``TrustedHostMiddleware``.
+
+        Comma-separated, whitespace-stripped, empties dropped. A blank/empty
+        value falls back to ``["*"]`` (permissive) so local dev never blocks on
+        Host validation; production should set this to the real hostname(s).
+        """
+        hosts = [h.strip() for h in self.allowed_hosts.split(",") if h.strip()]
+        return hosts or ["*"]
+
+    def database_ssl_warning(self) -> str | None:
+        """Advisory (non-breaking) check that production DB traffic is TLS-protected.
+
+        A non-loopback ``DATABASE_URL`` carries PHI across the network and SHOULD
+        require ``sslmode=require`` (HIPAA CRYPTO-04). Returning a string the
+        caller logs — rather than raising — surfaces the misconfiguration without
+        breaking startup. Returns ``None`` in dev, for loopback DBs, or when an
+        SSL parameter is already present.
+        """
+        if not self.is_production:
+            return None
+        parsed = urlparse(self.database_url)
+        host = (parsed.hostname or "").lower()
+        if host in _LOOPBACK_HOSTS:
+            return None
+        query = parse_qs(parsed.query)
+        if "sslmode" in query or "ssl" in query:
+            return None
+        return (
+            f"DATABASE_URL points at a non-loopback host ({host}) in production "
+            "without sslmode — PHI may traverse the network unencrypted. Add "
+            "'?sslmode=require' (or use a loopback/socket connection)."
+        )
+
     # Database
+    # NOTE (CRYPTO-04): a non-loopback DATABASE_URL in production should require
+    # TLS, e.g. append '?sslmode=require'. Loopback/socket connections do not.
+    # database_ssl_warning() surfaces a non-blocking startup warning when this is
+    # missing.
     database_url: str = "postgresql+asyncpg://localhost:5432/medtimeline"
     database_encryption_key: str = ""
 
@@ -176,6 +223,10 @@ class Settings(BaseSettings):
     app_env: str = "development"
     log_level: str = "INFO"
     cors_origins: str = "http://localhost:3000"
+    # Transport security (W19 / CRYPTO-04). Comma-separated Host headers accepted
+    # in production by TrustedHostMiddleware. Default "*" is permissive (dev/
+    # loopback); set explicitly to the deployment hostname(s) in production.
+    allowed_hosts: str = "*"
 
 
 settings = Settings()
