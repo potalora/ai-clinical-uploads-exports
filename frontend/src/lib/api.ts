@@ -181,6 +181,14 @@ class ApiClient {
     });
   }
 
+  async put<T>(endpoint: string, body?: unknown, token?: string): Promise<T> {
+    return this.request<T>(endpoint, {
+      method: "PUT",
+      body: body ? JSON.stringify(body) : undefined,
+      token,
+    });
+  }
+
   async postForm<T>(endpoint: string, formData: FormData, token?: string): Promise<T> {
     return this.request<T>(endpoint, {
       method: "POST",
@@ -248,3 +256,78 @@ export class ApiError extends Error {
 }
 
 export const api = new ApiClient(API_BASE);
+
+// --- LLM provider settings (Admin → System: "AI providers" card) ---
+// Keys are write-only from the UI: the GET only ever returns a masked
+// preview (`key_masked`), never the plaintext key.
+
+export interface LlmProviderInfo {
+  name: string;
+  is_local: boolean;
+  supports_vision: boolean;
+  configured: boolean;
+  has_key: boolean;
+  key_masked: string | null;
+  base_url: string | null;
+  model: string | null;
+  enabled: boolean;
+  source: string;
+}
+
+export interface LlmRouting {
+  default: string;
+  summary: string;
+  section: string;
+  dedup: string;
+  extraction: string;
+  vision: string;
+  extraction_engine: string;
+}
+
+export interface LlmSettings {
+  providers: LlmProviderInfo[];
+  routing: LlmRouting;
+}
+
+export interface ProviderUpdate {
+  api_key?: string;
+  base_url?: string;
+  model?: string;
+  enabled?: boolean;
+}
+
+export interface RoutingUpdate {
+  default?: string;
+  summary?: string;
+  section?: string;
+  dedup?: string;
+  extraction?: string;
+  vision?: string;
+  extraction_engine?: string;
+}
+
+export interface ProviderTestResult {
+  ok: boolean;
+  model?: string;
+  error_type?: string;
+}
+
+export function getLlmSettings(): Promise<LlmSettings> {
+  return api.get<LlmSettings>("/settings/llm");
+}
+
+export function saveProvider(name: string, body: ProviderUpdate): Promise<void> {
+  return api.put<void>(`/settings/llm/providers/${name}`, body);
+}
+
+export function clearProvider(name: string): Promise<void> {
+  return api.delete<void>(`/settings/llm/providers/${name}`);
+}
+
+export function saveRouting(body: RoutingUpdate): Promise<void> {
+  return api.put<void>("/settings/llm/routing", body);
+}
+
+export function testProvider(name: string): Promise<ProviderTestResult> {
+  return api.post<ProviderTestResult>(`/settings/llm/providers/${name}/test`);
+}

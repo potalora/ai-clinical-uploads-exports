@@ -19,7 +19,19 @@ import {
   Sun,
   Moon,
 } from "lucide-react";
-import { api } from "@/lib/api";
+import {
+  api,
+  getLlmSettings,
+  saveProvider,
+  clearProvider,
+  saveRouting,
+  testProvider,
+  type LlmSettings,
+  type LlmProviderInfo,
+  type LlmRouting,
+  type ProviderUpdate,
+  type ProviderTestResult,
+} from "@/lib/api";
 import { useAuthStore } from "@/stores/useAuthStore";
 import { useUserStore } from "@/stores/useUserStore";
 import { usePreferencesStore } from "@/stores/usePreferencesStore";
@@ -2111,6 +2123,9 @@ function SystemTab() {
         </div>
       </div>
 
+      {/* AI providers */}
+      <LlmProvidersCard />
+
       {/* Your data, your control */}
       <div className="card-surface pad" style={{ marginBottom: 18 }}>
         <h3 className="sec-title" style={{ marginBottom: 6 }}>
@@ -2189,6 +2204,412 @@ function Field({ l, v }: { l: string; v: ReactNode }) {
     <div className="field">
       <div className="field-l">{l}</div>
       <div className="field-v">{v}</div>
+    </div>
+  );
+}
+
+/* ==========================================
+   AI PROVIDERS CARD (System tab)
+   ========================================== */
+
+// One short, neutral line per routing operation. No clinical advice, no
+// marketing — just what the model is used for.
+const OP_COPY: Record<string, string> = {
+  default: "Used for any operation without its own override below.",
+  summary: "Writes your health summaries.",
+  extraction: "Pulls clinical entities from uploaded documents.",
+  vision: "Reads text from scanned PDFs and images.",
+  dedup: "Decides whether two records are the same.",
+  section: "Splits long notes into sections before extraction.",
+};
+
+// Per-operation routing exposed under the Advanced disclosure (the "default"
+// select sits above it). `vision` and `section` are model-only knobs.
+const ADVANCED_OPS = ["summary", "extraction", "vision", "dedup", "section"] as const;
+
+type RoutingOp = "default" | (typeof ADVANCED_OPS)[number];
+type TestState = ProviderTestResult | { pending: true };
+
+function LlmProvidersCard() {
+  const [settings, setSettings] = useState<LlmSettings | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [keyDrafts, setKeyDrafts] = useState<Record<string, string>>({});
+  const [urlDrafts, setUrlDrafts] = useState<Record<string, string>>({});
+  const [modelDrafts, setModelDrafts] = useState<Record<string, string>>({});
+  const [tests, setTests] = useState<Record<string, TestState>>({});
+
+  const reload = useCallback(async () => {
+    try {
+      const data = await getLlmSettings();
+      setSettings(data);
+    } catch {
+      // Fail soft: leave whatever we had; the card degrades to a note.
+      setSettings((prev) => prev);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  const onRoutingChange = async (op: RoutingOp, value: string) => {
+    setSettings((s) => (s ? { ...s, routing: { ...s.routing, [op]: value } } : s));
+    try {
+      await saveRouting({ [op]: value });
+    } catch {
+      void reload();
+    }
+  };
+
+  const onSaveKey = async (name: string) => {
+    const key = keyDrafts[name];
+    if (!key) return;
+    try {
+      await saveProvider(name, { api_key: key });
+      // Write-only: drop the plaintext draft once it is stored.
+      setKeyDrafts((d) => ({ ...d, [name]: "" }));
+      await reload();
+    } catch {
+      // Best-effort: leave the draft so the user can retry.
+    }
+  };
+
+  const onClear = async (name: string) => {
+    try {
+      await clearProvider(name);
+      setKeyDrafts((d) => ({ ...d, [name]: "" }));
+      await reload();
+    } catch {
+      // ignore
+    }
+  };
+
+  const onTest = async (name: string) => {
+    setTests((t) => ({ ...t, [name]: { pending: true } }));
+    try {
+      const result = await testProvider(name);
+      setTests((t) => ({ ...t, [name]: result }));
+    } catch {
+      setTests((t) => ({ ...t, [name]: { ok: false, error_type: "error" } }));
+    }
+  };
+
+  const onToggleEnabled = async (p: LlmProviderInfo) => {
+    const next = !p.enabled;
+    setSettings((s) =>
+      s
+        ? {
+            ...s,
+            providers: s.providers.map((x) =>
+              x.name === p.name ? { ...x, enabled: next } : x
+            ),
+          }
+        : s
+    );
+    try {
+      await saveProvider(p.name, { enabled: next });
+    } catch {
+      void reload();
+    }
+  };
+
+  const onSaveConnection = async (p: LlmProviderInfo) => {
+    const body: ProviderUpdate = {
+      base_url: urlDrafts[p.name] ?? p.base_url ?? "",
+      model: modelDrafts[p.name] ?? p.model ?? "",
+    };
+    try {
+      await saveProvider(p.name, body);
+      await reload();
+    } catch {
+      // ignore
+    }
+  };
+
+  const providerOptions = (providers: LlmProviderInfo[]) =>
+    providers.map((p) => (
+      // Cloud options without a key are unselectable; local options always work.
+      <option key={p.name} value={p.name} disabled={!p.is_local && !p.configured}>
+        {p.name} · {p.model || "(default)"}
+      </option>
+    ));
+
+  const renderTest = (name: string): ReactNode => {
+    const r = tests[name];
+    if (!r) return null;
+    if ("pending" in r) {
+      return (
+        <span className="muted" style={{ fontSize: 12.5 }}>
+          Testing…
+        </span>
+      );
+    }
+    return r.ok ? (
+      <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--success)" }}>
+        OK · {r.model || "ready"}
+      </span>
+    ) : (
+      <span style={{ fontSize: 12.5, fontWeight: 600, color: "var(--danger)" }}>
+        Failed · {r.error_type || "error"}
+      </span>
+    );
+  };
+
+  return (
+    <div className="card-surface pad" style={{ marginBottom: 18 }}>
+      <h3 className="sec-title" style={{ marginBottom: 6 }}>
+        AI providers
+      </h3>
+      <p className="h-sub" style={{ margin: "0 0 6px" }}>
+        Choose which model runs each AI operation, and store your own API keys.
+        Cloud providers receive de-identified records over the network; local
+        providers (Ollama, LM Studio) keep your data on this machine.
+      </p>
+
+      {loading ? (
+        <RetroLoadingState text="Loading AI providers" />
+      ) : !settings ? (
+        <p className="muted" style={{ fontSize: 13.5, padding: "12px 0", margin: 0 }}>
+          AI provider settings are unavailable right now.
+        </p>
+      ) : (
+        <>
+          {/* Routing — default provider */}
+          <div
+            className="field"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 16,
+            }}
+          >
+            <div>
+              <div className="field-l" style={{ marginBottom: 6 }}>
+                Default provider
+              </div>
+              <div className="field-v" style={{ padding: 0 }}>
+                {OP_COPY.default}
+              </div>
+            </div>
+            <select
+              className="selectbox"
+              aria-label="Default AI provider"
+              value={settings.routing.default}
+              onChange={(e) => onRoutingChange("default", e.target.value)}
+            >
+              {providerOptions(settings.providers)}
+            </select>
+          </div>
+
+          {/* Advanced — per-operation routing */}
+          <details
+            open={showAdvanced}
+            onToggle={(e) => setShowAdvanced((e.target as HTMLDetailsElement).open)}
+            style={{ borderBottom: "1px solid var(--border)" }}
+          >
+            <summary
+              className="field-l"
+              style={{
+                cursor: "pointer",
+                padding: "13px 0",
+                userSelect: "none",
+                listStyle: "revert",
+              }}
+            >
+              Advanced — route each operation
+            </summary>
+            <div style={{ paddingBottom: 4 }}>
+              {ADVANCED_OPS.map((op) => (
+                <div
+                  key={op}
+                  className="field"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 16,
+                  }}
+                >
+                  <div>
+                    <div
+                      className="field-l"
+                      style={{ marginBottom: 6, textTransform: "capitalize" }}
+                    >
+                      {op}
+                    </div>
+                    <div className="field-v" style={{ padding: 0 }}>
+                      {OP_COPY[op]}
+                    </div>
+                  </div>
+                  <select
+                    className="selectbox"
+                    aria-label={`${op} provider`}
+                    value={settings.routing[op as keyof LlmRouting]}
+                    onChange={(e) => onRoutingChange(op, e.target.value)}
+                  >
+                    {providerOptions(settings.providers)}
+                  </select>
+                </div>
+              ))}
+            </div>
+          </details>
+
+          {/* Per-provider rows */}
+          <div style={{ marginTop: 10 }}>
+            {settings.providers.map((p) => {
+              const needsEndpoint = p.is_local || p.name === "openrouter";
+              return (
+                <div
+                  key={p.name}
+                  style={{ padding: "14px 0", borderBottom: "1px solid var(--border)" }}
+                >
+                  {/* Header: name + local/cloud tag + vision badge + enabled toggle */}
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      marginBottom: 8,
+                    }}
+                  >
+                    <span
+                      style={{ fontWeight: 700, fontSize: 14.5, textTransform: "capitalize" }}
+                    >
+                      {p.name}
+                    </span>
+                    <span className="tag">{p.is_local ? "local" : "cloud"}</span>
+                    {p.supports_vision && (
+                      <span
+                        className="tag"
+                        style={{ background: "var(--primary-soft)", color: "var(--primary)" }}
+                      >
+                        vision
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      className="btn ghost sm"
+                      style={{ marginLeft: "auto" }}
+                      aria-label={`Toggle ${p.name} enabled`}
+                      onClick={() => onToggleEnabled(p)}
+                    >
+                      {p.enabled ? "Enabled" : "Disabled"}
+                    </button>
+                  </div>
+
+                  {/* Masked key (read-only preview — never the full key) */}
+                  <div
+                    className="muted"
+                    style={{
+                      fontFamily: "var(--font-mono), monospace",
+                      fontSize: 12,
+                      marginBottom: 8,
+                    }}
+                  >
+                    Key: {p.key_masked || "Not set"}
+                  </div>
+
+                  {/* Key entry + actions */}
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 8,
+                      flexWrap: "wrap",
+                      alignItems: "center",
+                    }}
+                  >
+                    <div className="search" style={{ flex: "0 1 280px", minWidth: 200 }}>
+                      <input
+                        type="password"
+                        autoComplete="off"
+                        aria-label={`${p.name} API key`}
+                        placeholder="Paste API key"
+                        value={keyDrafts[p.name] ?? ""}
+                        onChange={(e) =>
+                          setKeyDrafts((d) => ({ ...d, [p.name]: e.target.value }))
+                        }
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      className="btn ghost sm"
+                      aria-label={`Save ${p.name} key`}
+                      onClick={() => onSaveKey(p.name)}
+                    >
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      className="btn ghost sm"
+                      aria-label={`Clear ${p.name}`}
+                      onClick={() => onClear(p.name)}
+                    >
+                      Clear
+                    </button>
+                    <button
+                      type="button"
+                      className="btn ghost sm"
+                      aria-label={`Test ${p.name}`}
+                      onClick={() => onTest(p.name)}
+                    >
+                      Test
+                    </button>
+                    {renderTest(p.name)}
+                  </div>
+
+                  {/* Endpoint + model for local / OpenRouter providers */}
+                  {needsEndpoint && (
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: 8,
+                        flexWrap: "wrap",
+                        alignItems: "center",
+                        marginTop: 8,
+                      }}
+                    >
+                      <div className="search" style={{ flex: "0 1 280px", minWidth: 200 }}>
+                        <input
+                          type="text"
+                          aria-label={`${p.name} base URL`}
+                          placeholder="Base URL"
+                          value={urlDrafts[p.name] ?? p.base_url ?? ""}
+                          onChange={(e) =>
+                            setUrlDrafts((d) => ({ ...d, [p.name]: e.target.value }))
+                          }
+                        />
+                      </div>
+                      <div className="search" style={{ flex: "0 1 200px", minWidth: 160 }}>
+                        <input
+                          type="text"
+                          aria-label={`${p.name} model`}
+                          placeholder="Model"
+                          value={modelDrafts[p.name] ?? p.model ?? ""}
+                          onChange={(e) =>
+                            setModelDrafts((d) => ({ ...d, [p.name]: e.target.value }))
+                          }
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        className="btn ghost sm"
+                        aria-label={`Save ${p.name} connection`}
+                        onClick={() => onSaveConnection(p)}
+                      >
+                        Save
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
     </div>
   );
 }
