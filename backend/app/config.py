@@ -73,10 +73,10 @@ class Settings(BaseSettings):
     # OpenAI-compatible family (base_url distinguishes them; all speak the
     # OpenAI Chat Completions API, so one provider class serves all four).
     openai_api_key: str = ""
-    openai_model: str = "gpt-4o-mini"
+    openai_model: str = "gpt-5.4-mini"
     openai_base_url: str = "https://api.openai.com/v1"
     openrouter_api_key: str = ""
-    openrouter_model: str = "openai/gpt-4o-mini"
+    openrouter_model: str = "openai/gpt-5.4-mini"
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     ollama_base_url: str = "http://localhost:11434/v1"
     ollama_model: str = "llama3.2"
