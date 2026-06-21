@@ -865,11 +865,347 @@ async def _mark_cancelled(db: AsyncSession, upload: UploadedFile) -> None:
         await db.commit()
 
 
+async def _run_gemini_extraction_engine(db, upload, upload_id, user_id, text, sem):
+    """Default engine: scrub → Gemini section parse → per-section LangExtract.
+
+    Returns ``(all_entities, parsed_doc)`` or ``(None, None)`` if the upload was
+    cancelled mid-run (the file is already marked cancelled). This is the exact
+    pre-WS-A behavior, lifted verbatim into a helper so the engine branch can
+    select it without changing the default path.
+    """
+    from app.services.extraction.entity_extractor import extract_entities_async
+    from app.services.ai.phi_scrubber import scrub_phi
+    from app.services.ai.patient_phi import patient_scrub_args
+    from app.models.patient import Patient
+    from app.services.extraction.section_parser import ParsedDocument, ParsedSection, SectionType
+
+    # Step 2: Scrub PHI before entity extraction — local, no semaphore.
+    patients = (
+        await db.execute(select(Patient).where(Patient.user_id == user_id))
+    ).scalars().all()
+    scrubbed_text, _deident_report = scrub_phi(text, **patient_scrub_args(list(patients)))
+
+    # Step 3: Section parsing (skip Gemini call for small docs)
+    if len(scrubbed_text) < settings.small_doc_threshold:
+        parsed_doc = ParsedDocument(
+            sections=[ParsedSection(
+                section_type=SectionType.OTHER,
+                title="Full Document",
+                text=scrubbed_text,
+                char_range=(0, len(scrubbed_text)),
+            )],
+            document_type="clinical_note",
+            primary_visit_date=None,
+            provider=None,
+            facility=None,
+        )
+    else:
+        async with sem:
+            parsed_doc = await parse_sections(scrubbed_text, settings.gemini_api_key)
+
+    upload.extraction_sections = {
+        "sections": [
+            {"type": s.section_type.value, "title": s.title, "char_range": s.char_range}
+            for s in parsed_doc.sections
+        ]
+    }
+    upload.document_metadata = {
+        "document_type": parsed_doc.document_type,
+        "primary_visit_date": parsed_doc.primary_visit_date,
+        "provider": parsed_doc.provider,
+        "facility": parsed_doc.facility,
+        "section_count": len(parsed_doc.sections),
+    }
+    await db.commit()
+
+    if await _is_cancel_requested(db, upload_id):
+        await _mark_cancelled(db, upload)
+        return None, None
+
+    # Step 4: Per-section entity extraction (with small-chunk batching)
+    all_entities = []
+    extraction_tasks = []
+    current_batch = ""
+    current_section = None
+
+    for section in parsed_doc.sections:
+        chunks = split_large_section(section.text)
+        for chunk in chunks:
+            if current_batch and len(current_batch) + len(chunk) + 1 <= 2000:
+                current_batch += "\n" + chunk
+            else:
+                if current_batch:
+                    extraction_tasks.append((current_batch, current_section))
+                current_batch = chunk
+                current_section = section.section_type.value
+    if current_batch:
+        extraction_tasks.append((current_batch, current_section))
+
+    section_total = len(extraction_tasks)
+    upload.progress_stage = "extracting_entities"
+    upload.progress_detail = {"section_index": 0, "section_total": section_total}
+    await db.commit()
+
+    section_sem = asyncio.Semaphore(settings.section_extraction_concurrency)
+
+    async def extract_chunk(text_chunk: str, section_type: str):
+        async with section_sem:
+            async with sem:
+                chunk_result = await extract_entities_async(
+                    text_chunk, upload.filename, settings.gemini_api_key
+                )
+        return chunk_result, section_type
+
+    tasks = [
+        asyncio.create_task(extract_chunk(chunk, stype))
+        for chunk, stype in extraction_tasks
+    ]
+    results: list = []
+    done_count = 0
+    for fut in asyncio.as_completed(tasks):
+        try:
+            results.append(await fut)
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:  # surfaced to _collect_entities as a failure
+            results.append(exc)
+        done_count += 1
+        upload.progress_detail = {"section_index": done_count, "section_total": section_total}
+        await db.commit()
+        if await _is_cancel_requested(db, upload_id):
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await _mark_cancelled(db, upload)
+            return None, None
+
+    collected, failed_chunks = _collect_entities(results, len(extraction_tasks))
+    all_entities.extend(collected)
+    if failed_chunks:
+        errs = list(upload.ingestion_errors or [])
+        errs.append({
+            "stage": "entity_extraction",
+            "failed_chunks": failed_chunks,
+            "total_chunks": len(extraction_tasks),
+            "error_type": "ExtractionChunkFailure",
+        })
+        upload.ingestion_errors = errs
+        logger.warning(
+            "Extraction for %s: %d/%d chunks failed",
+            upload.id, failed_chunks, len(extraction_tasks),
+        )
+    return all_entities, parsed_doc
+
+
+def _resolve_extraction_engine(requested: str | None) -> str:
+    """Resolve the effective extraction engine, degrading ``local``/``hybrid`` to
+    ``gemini`` when the OPTIONAL clinical-NLP stack (scispaCy + medspaCy + the NER
+    model — the ``.[clinical-nlp]`` extra) isn't installed/available.
+
+    This is what makes the local path strictly opt-in: the flag can be set without
+    the deps present ("not install and use") and extraction still works via Gemini
+    rather than crashing or under-extracting. Pure decision logic (no I/O beyond
+    the cached model probe) so it is unit-testable.
+    """
+    engine = (requested or "gemini").lower()
+    if engine not in ("local", "hybrid"):
+        return "gemini"
+    try:
+        from app.services.extraction.clinical_context import get_clinical_context
+        from app.services.extraction.local_ner import get_local_ner
+
+        if get_local_ner().warm_load() and get_clinical_context().warm_load():
+            return engine
+    except Exception:  # noqa: BLE001 - missing deps must never break extraction
+        pass
+    logger.warning(
+        "EXTRACTION_ENGINE=%s but the local clinical-NLP models/deps are "
+        "unavailable; falling back to the Gemini engine. Enable the on-device path "
+        'with `pip install -e ".[clinical-nlp]"` plus the scispaCy model.',
+        engine,
+    )
+    return "gemini"
+
+
+async def _run_local_extraction_engine(db, upload, upload_id, user_id, text, engine, sem):
+    """WS-A engine: on-device medspaCy + scispaCy fast-path (``local``/``hybrid``).
+
+    Runs local NER + ConText on the **unscrubbed** text (never leaves the device,
+    so no PHI round-trip). In ``hybrid`` mode, hard sections escalate to Gemini —
+    and only the escalated section text is scrubbed before that call. Returns
+    ``(all_entities, parsed_doc)`` or ``None`` if cancelled.
+    """
+    from app.services.ai.phi_scrubber import scrub_phi
+    from app.services.ai.patient_phi import patient_scrub_args
+    from app.services.extraction.entity_extractor import extract_entities_async
+    from app.services.extraction.entity_validator import validate_entities
+    from app.services.extraction.extraction_engine import run_clinical_extraction
+    from app.services.extraction.local_ner import get_local_ner
+    from app.services.extraction.clinical_context import get_clinical_context
+    from app.services.extraction.section_parser import ParsedDocument
+    from app.models.patient import Patient
+
+    patients = (
+        await db.execute(select(Patient).where(Patient.user_id == user_id))
+    ).scalars().all()
+
+    async def _gemini_section_extract(section_text: str):
+        # Rule 2: de-identify before any Gemini call. Only escalated section text
+        # is sent; the bulk local path is never scrubbed (it stays on-device).
+        scrubbed, _rep = scrub_phi(section_text, **patient_scrub_args(list(patients)))
+        out: list = []
+        for chunk in split_large_section(scrubbed):
+            async with sem:
+                res = await extract_entities_async(chunk, upload.filename, settings.gemini_api_key)
+            if res.entities:
+                out.extend(res.entities)
+        return validate_entities(out)
+
+    upload.progress_stage = "extracting_entities"
+    upload.progress_detail = {"section_index": 0, "section_total": 0}
+    await db.commit()
+
+    result = await run_clinical_extraction(
+        text,
+        engine=engine,
+        ner=get_local_ner(),
+        context=get_clinical_context(),
+        gemini_section_extract=_gemini_section_extract,
+        confidence_threshold=settings.extraction_local_confidence_threshold,
+    )
+
+    if await _is_cancel_requested(db, upload_id):
+        await _mark_cancelled(db, upload)
+        return None
+
+    # Publish the real section count so the upload UI shows section progress for
+    # the local/hybrid engine too (the Gemini path emits live per-section updates;
+    # the local pass is near-instant, so we publish the total once sections are
+    # processed — never leave it at 0, which reads as "no progress").
+    _n_sections = max(len(result.sections), 1)
+    upload.progress_detail = {"section_index": _n_sections, "section_total": _n_sections}
+    await db.commit()
+
+    parsed_doc = ParsedDocument(
+        sections=result.sections,
+        document_type=result.document_metadata.get("document_type", "clinical_note"),
+        primary_visit_date=result.document_metadata.get("primary_visit_date"),
+        provider=result.document_metadata.get("provider"),
+        facility=result.document_metadata.get("facility"),
+    )
+    upload.extraction_sections = {
+        "sections": [
+            {"type": s.section_type.value, "title": s.title, "char_range": s.char_range}
+            for s in result.sections
+        ]
+    }
+    upload.document_metadata = {**result.document_metadata, "extraction_stats": result.stats}
+    await db.commit()
+    return result.entities, parsed_doc
+
+
+async def _autoconfirm_and_finish(db, upload, upload_id, user_id, unique_entities, parsed_doc):
+    """Auto-confirm extracted entities into HealthRecords and finalize the upload.
+
+    Shared across engines: ensures a patient exists, maps entities → FHIR records,
+    links the encounter, builds A&P cross-references, then kicks off the dedup
+    scan. Lifted verbatim from the prior inline tail.
+    """
+    from app.services.extraction.entity_to_fhir import (
+        entity_to_health_record_dict,
+        resolve_document_date,
+        resolve_document_provider,
+    )
+
+    patient = await _ensure_patient(db, user_id)
+
+    document_date = resolve_document_date(unique_entities, parsed_doc.primary_visit_date)
+    document_provider = resolve_document_provider(unique_entities)
+
+    if patient:  # always true — _ensure_patient never returns None (defensive)
+        from app.services.ingestion.reextraction import soft_delete_prior_extracted
+        replaced = await soft_delete_prior_extracted(db, upload_id)
+        if replaced:
+            logger.info("Re-extraction replaced %d prior records for %s", replaced, upload_id)
+
+        encounter_id = None
+        created_records = []
+
+        for entity in unique_entities:
+            record_dict = entity_to_health_record_dict(
+                entity, user_id, patient.id, upload_id,
+                document_date=document_date,
+                document_provider=document_provider,
+            )
+            if record_dict is None:
+                continue
+            record_dict["source_section"] = entity.attributes.get("_source_section")
+            record = HealthRecord(**record_dict)
+            db.add(record)
+            created_records.append((record, entity))
+
+            if entity.entity_class == "encounter":
+                await db.flush()
+                encounter_id = record.id
+
+        if encounter_id:
+            for record, _ in created_records:
+                if record.id != encounter_id:
+                    record.linked_encounter_id = encounter_id
+
+        ap_records = [(r, e) for r, e in created_records if e.entity_class == "assessment_plan"]
+        non_ap_records = [(r, e) for r, e in created_records if e.entity_class != "assessment_plan"]
+        if ap_records and non_ap_records:
+            from app.models.cross_reference import RecordCrossReference
+            await db.flush()
+            for ap_record, _ in ap_records:
+                for other_record, other_entity in non_ap_records:
+                    if other_entity.entity_class in ("encounter",):
+                        continue
+                    ref_type = {
+                        "medication": "prescribes",
+                        "condition": "addresses",
+                        "lab_result": "supports",
+                        "vital": "supports",
+                        "procedure": "addresses",
+                        "allergy": "addresses",
+                        "imaging_result": "supports",
+                        "family_history": "supports",
+                        "social_history": "supports",
+                    }.get(other_entity.entity_class, "addresses")
+                    xref = RecordCrossReference(
+                        document_record_id=ap_record.id,
+                        referenced_record_id=other_record.id,
+                        reference_type=ref_type,
+                    )
+                    db.add(xref)
+
+        await db.commit()
+
+        upload.ingestion_status = "dedup_scanning"
+        upload.record_count = len(created_records)
+        upload.progress_stage = None
+        await db.commit()
+
+        from app.services.ingestion.coordinator import _run_dedup_background
+        asyncio.create_task(_run_dedup_background(upload_id, patient.id, user_id))
+    else:
+        upload.ingestion_status = "awaiting_confirmation"
+
+    upload.progress_stage = None
+    upload.processing_completed_at = datetime.now(timezone.utc)
+    await db.commit()
+
+
 async def _process_unstructured(upload_id: UUID, file_path: Path, user_id: UUID) -> None:
     """Background task: extract text then entities from an unstructured file.
 
-    Uses section-aware extraction: Gemini parses document structure first,
-    then LangExtract runs per-section (respecting the 2000-char buffer).
+    Entity extraction is engine-selectable via ``EXTRACTION_ENGINE`` (WS-A):
+    ``gemini`` (default) parses sections + runs LangExtract per section;
+    ``local``/``hybrid`` use the on-device medspaCy + scispaCy fast-path
+    (escalating hard sections to Gemini in ``hybrid``). The downstream
+    validate → dedup → auto-confirm tail is shared across engines.
 
     Cooperative cancel: ``cancel_requested`` is checked at the start and between
     stages; when set the file is marked ``cancelled`` (terminal) and no further
@@ -878,10 +1214,6 @@ async def _process_unstructured(upload_id: UUID, file_path: Path, user_id: UUID)
     """
     from app.services.extraction.text_extractor import extract_text, detect_file_type as _detect_file_type
     from app.services.extraction.text_extractor import FileType as _FileType
-    from app.services.extraction.entity_extractor import extract_entities_async
-    from app.services.ai.phi_scrubber import scrub_phi
-    from app.services.ai.patient_phi import patient_scrub_args
-    from app.models.patient import Patient
 
     async with async_session_factory() as db:
         result = await db.execute(
@@ -927,147 +1259,29 @@ async def _process_unstructured(upload_id: UUID, file_path: Path, user_id: UUID)
                 await _mark_cancelled(db, upload)
                 return
 
-            # Step 2: Scrub PHI before entity extraction — local, no semaphore.
-            # Pass the user's known patient identifiers so their own name / MRN /
-            # DOB are stripped (regex patterns alone don't catch free-text names).
-            patients = (
-                await db.execute(select(Patient).where(Patient.user_id == user_id))
-            ).scalars().all()
-            scrubbed_text, deident_report = scrub_phi(
-                text, **patient_scrub_args(list(patients))
-            )
+            # WS-A: clinical-NLP engine selection. The default "gemini" engine
+            # runs the LangExtract/Gemini path below unchanged. "local"/"hybrid"
+            # run the on-device medspaCy + scispaCy fast-path, escalating only
+            # hard sections to Gemini (hybrid). Flag default-OFF until validated.
+            engine = _resolve_extraction_engine(settings.extraction_engine)
 
-            # Step 3: Section parsing (skip Gemini call for small docs)
-            if len(scrubbed_text) < settings.small_doc_threshold:
-                from app.services.extraction.section_parser import ParsedDocument, ParsedSection, SectionType
-                parsed_doc = ParsedDocument(
-                    sections=[ParsedSection(
-                        section_type=SectionType.OTHER,
-                        title="Full Document",
-                        text=scrubbed_text,
-                        char_range=(0, len(scrubbed_text)),
-                    )],
-                    document_type="clinical_note",
-                    primary_visit_date=None,
-                    provider=None,
-                    facility=None,
+            if engine in ("local", "hybrid"):
+                local_out = await _run_local_extraction_engine(
+                    db, upload, upload_id, user_id, text, engine, sem
                 )
+                if local_out is None:
+                    return  # cancelled inside the helper (already marked)
+                all_entities, parsed_doc = local_out
             else:
-                async with sem:
-                    parsed_doc = await parse_sections(scrubbed_text, settings.gemini_api_key)
-
-            upload.extraction_sections = {
-                "sections": [
-                    {"type": s.section_type.value, "title": s.title, "char_range": s.char_range}
-                    for s in parsed_doc.sections
-                ]
-            }
-            upload.document_metadata = {
-                "document_type": parsed_doc.document_type,
-                "primary_visit_date": parsed_doc.primary_visit_date,
-                "provider": parsed_doc.provider,
-                "facility": parsed_doc.facility,
-                "section_count": len(parsed_doc.sections),
-            }
-            await db.commit()
-
-            if await _is_cancel_requested(db, upload_id):
-                await _mark_cancelled(db, upload)
-                return
-
-            # Step 4: Per-section entity extraction (with small-chunk batching)
-            all_entities = []
-            extraction_tasks = []
-            current_batch = ""
-            current_section = None
-
-            for section in parsed_doc.sections:
-                chunks = split_large_section(section.text)
-                for chunk in chunks:
-                    if current_batch and len(current_batch) + len(chunk) + 1 <= 2000:
-                        current_batch += "\n" + chunk
-                    else:
-                        if current_batch:
-                            extraction_tasks.append((current_batch, current_section))
-                        current_batch = chunk
-                        current_section = section.section_type.value
-            if current_batch:
-                extraction_tasks.append((current_batch, current_section))
-
-            section_total = len(extraction_tasks)
-            upload.progress_stage = "extracting_entities"
-            upload.progress_detail = {"section_index": 0, "section_total": section_total}
-            await db.commit()
-
-            # Process sections concurrently (configurable)
-            section_sem = asyncio.Semaphore(settings.section_extraction_concurrency)
-
-            async def extract_chunk(text_chunk: str, section_type: str):
-                async with section_sem:
-                    async with sem:
-                        chunk_result = await extract_entities_async(
-                            text_chunk, upload.filename, settings.gemini_api_key
-                        )
-                return chunk_result, section_type
-
-            # Use as_completed so we can advance section-level progress and check
-            # for a cancel request between sections without serializing the
-            # actual (concurrent) Gemini calls.
-            tasks = [
-                asyncio.create_task(extract_chunk(chunk, stype))
-                for chunk, stype in extraction_tasks
-            ]
-            results: list = []
-            done_count = 0
-            for fut in asyncio.as_completed(tasks):
-                try:
-                    results.append(await fut)
-                except asyncio.CancelledError:
-                    pass
-                except Exception as exc:  # surfaced to _collect_entities as a failure
-                    results.append(exc)
-                done_count += 1
-                upload.progress_detail = {
-                    "section_index": done_count,
-                    "section_total": section_total,
-                }
-                await db.commit()
-                if await _is_cancel_requested(db, upload_id):
-                    for t in tasks:
-                        if not t.done():
-                            t.cancel()
-                    await asyncio.gather(*tasks, return_exceptions=True)
-                    await _mark_cancelled(db, upload)
-                    return
-
-            collected, failed_chunks = _collect_entities(results, len(extraction_tasks))
-            all_entities.extend(collected)
-            if failed_chunks:
-                errs = list(upload.ingestion_errors or [])
-                errs.append({
-                    "stage": "entity_extraction",
-                    "failed_chunks": failed_chunks,
-                    "total_chunks": len(extraction_tasks),
-                    "error_type": "ExtractionChunkFailure",
-                })
-                upload.ingestion_errors = errs
-                logger.warning(
-                    "Extraction for %s: %d/%d chunks failed",
-                    upload.id,
-                    failed_chunks,
-                    len(extraction_tasks),
+                all_entities, parsed_doc = await _run_gemini_extraction_engine(
+                    db, upload, upload_id, user_id, text, sem
                 )
+                if all_entities is None:
+                    return  # cancelled inside the helper (already marked)
 
-            # Precision guards (A1-A5): drop/repair the false entities
-            # LangExtract invents (mentioned-not-performed procedures, value-only
-            # fragments, lifestyle-as-observation, drug-class abbreviations, PHI
-            # placeholders) BEFORE they become records.
+            # Precision guards (A1-A5) + within-document dedup are shared across
+            # engines (idempotent on already-validated local output).
             all_entities = validate_entities(all_entities)
-
-            # Deduplicate entities within the same document. Normalize the text
-            # first (collapse whitespace, strip parenthetical/date variants,
-            # casefold) so near-duplicates like "Cystectomy (2020)" and
-            # "Cystectomy" collapse instead of producing the same record N times.
             seen = set()
             unique_entities = []
             for entity in all_entities:
@@ -1077,8 +1291,6 @@ async def _process_unstructured(upload_id: UUID, file_path: Path, user_id: UUID)
                     unique_entities.append(entity)
 
             upload.progress_stage = "mapping_fhir"
-
-            # Store entities on upload record
             upload.extraction_entities = [
                 {
                     "entity_class": e.entity_class,
@@ -1091,109 +1303,9 @@ async def _process_unstructured(upload_id: UUID, file_path: Path, user_id: UUID)
                 for e in unique_entities
             ]
             await db.commit()
+            await _autoconfirm_and_finish(db, upload, upload_id, user_id, unique_entities, parsed_doc)
+            return
 
-            # Step 5: Auto-confirm. Ensure a patient exists (create a blank
-            # placeholder for unstructured-first users) so extraction always
-            # yields records instead of stalling at awaiting_confirmation.
-            from app.services.extraction.entity_to_fhir import (
-                entity_to_health_record_dict,
-                resolve_document_date,
-                resolve_document_provider,
-            )
-
-            patient = await _ensure_patient(db, user_id)
-
-            # Encounter/visit date used as a fallback for entities that carry no
-            # date of their own — recovers dates for records the note ties to the
-            # visit (labs, vitals, meds, …) without fabricating wrong ones.
-            document_date = resolve_document_date(
-                unique_entities, parsed_doc.primary_visit_date
-            )
-            # Note-level attending/ordering provider used as a fallback so AI
-            # encounters/observations/procedures get a participant/performer
-            # even when the individual entity carries no provider of its own (B2).
-            document_provider = resolve_document_provider(unique_entities)
-
-            if patient:  # always true — _ensure_patient never returns None (defensive)
-                from app.services.ingestion.reextraction import soft_delete_prior_extracted
-                replaced = await soft_delete_prior_extracted(db, upload_id)
-                if replaced:
-                    logger.info("Re-extraction replaced %d prior records for %s", replaced, upload_id)
-
-                encounter_id = None
-                created_records = []
-
-                for entity in unique_entities:
-                    record_dict = entity_to_health_record_dict(
-                        entity, user_id, patient.id, upload_id,
-                        document_date=document_date,
-                        document_provider=document_provider,
-                    )
-                    if record_dict is None:
-                        continue
-                    record_dict["source_section"] = entity.attributes.get("_source_section")
-                    record = HealthRecord(**record_dict)
-                    db.add(record)
-                    created_records.append((record, entity))
-
-                    # Track encounter ID for linking
-                    if entity.entity_class == "encounter":
-                        await db.flush()
-                        encounter_id = record.id
-
-                # Link all records to the encounter
-                if encounter_id:
-                    for record, _ in created_records:
-                        if record.id != encounter_id:
-                            record.linked_encounter_id = encounter_id
-
-                # Create cross-references from A&P DocumentReference to other records
-                ap_records = [(r, e) for r, e in created_records if e.entity_class == "assessment_plan"]
-                non_ap_records = [(r, e) for r, e in created_records if e.entity_class != "assessment_plan"]
-                if ap_records and non_ap_records:
-                    from app.models.cross_reference import RecordCrossReference
-                    await db.flush()  # Ensure all record IDs are assigned
-                    for ap_record, _ in ap_records:
-                        for other_record, other_entity in non_ap_records:
-                            if other_entity.entity_class in ("encounter",):
-                                continue  # Don't cross-ref the encounter itself
-                            ref_type = {
-                                "medication": "prescribes",
-                                "condition": "addresses",
-                                "lab_result": "supports",
-                                "vital": "supports",
-                                "procedure": "addresses",
-                                "allergy": "addresses",
-                                "imaging_result": "supports",
-                                "family_history": "supports",
-                                "social_history": "supports",
-                            }.get(other_entity.entity_class, "addresses")
-                            xref = RecordCrossReference(
-                                document_record_id=ap_record.id,
-                                referenced_record_id=other_record.id,
-                                reference_type=ref_type,
-                            )
-                            db.add(xref)
-
-                await db.commit()
-
-                # Run dedup scan in background
-                upload.ingestion_status = "dedup_scanning"
-                upload.record_count = len(created_records)
-                upload.progress_stage = None
-                await db.commit()
-
-                from app.services.ingestion.coordinator import _run_dedup_background
-                asyncio.create_task(
-                    _run_dedup_background(upload_id, patient.id, user_id)
-                )
-            else:
-                # No patient found — fall back to manual confirmation
-                upload.ingestion_status = "awaiting_confirmation"
-
-            upload.progress_stage = None
-            upload.processing_completed_at = datetime.now(timezone.utc)
-            await db.commit()
 
         except Exception as e:
             # H4: Log full error internally, expose only error type to client

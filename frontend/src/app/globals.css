@@ -462,6 +462,20 @@
 .tl-date { font-family: var(--font-mono), monospace; font-size: 12px; color: var(--text-muted); white-space: nowrap; flex-shrink: 0; text-align: right; }
 .tl-val { font-family: var(--font-mono), monospace; font-size: 14px; font-weight: 600; margin-top: 6px; color: var(--text); }
 
+/* metric strip - inline scalar preview (value, flag, gauge, facets). Neutral
+   framing only: notable = out-of-range accent (theme sienna), never red/green. */
+.tl-ms { display: flex; flex-direction: column; gap: 6px; margin-top: 7px; }
+.tl-ms-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.tl-ms-val { font-family: var(--font-mono), monospace; font-size: 14px; font-weight: 600; color: var(--text); }
+.tl-ms-unit { font-weight: 400; color: var(--text-muted); }
+.tl-ms-flag { font-size: 10px; padding: 2px 9px; }
+.tl-ms-flag[data-emphasis="notable"] { color: var(--theme-sienna); }
+.tl-ms-flag[data-emphasis="muted"] { color: var(--text-muted); opacity: 0.9; }
+.tl-ms-facet { font-family: var(--font-mono), monospace; font-size: 11px; color: var(--text-muted); padding: 2px 8px; border-radius: var(--radius-pill); background: var(--bg-2); }
+.tl-ms-gauge { max-width: 260px; }
+.tl-ms-gauge .gauge { margin-top: 2px; }
+.tl-ms-gauge .gauge-sc { margin-top: 5px; }
+
 /* filters */
 .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 26px; }
 .filt { appearance: none; cursor: pointer; font-family: var(--font-body), sans-serif; font-size: 13px; font-weight: 600; letter-spacing: 0; text-transform: capitalize; padding: 7px 13px; border-radius: var(--radius-pill); background: var(--card); border: 1px solid var(--border); color: var(--text-dim); transition: all 0.16s; }
@@ -474,6 +488,13 @@
 .field-l { font-family: var(--font-mono), monospace; font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; }
 .field-v { font-size: 14.5px; color: var(--text); line-height: 1.5; }
 .panel { background: var(--card-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 18px; }
+
+/* "From this visit" — linked-record rows in the encounter detail (reuse timeline row vocabulary) */
+.dv-linked { display: flex; flex-direction: column; gap: 8px; }
+.dv-linked-row { appearance: none; cursor: pointer; text-align: left; width: 100%; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; transition: border-color 0.16s, transform 0.16s; }
+.dv-linked-row:hover { border-color: var(--border-strong); transform: translateX(2px); }
+.dv-linked-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dv-linked-title { font-size: 13.5px; font-weight: 600; color: var(--text); }
 
 /* gauge — neutral reference-range marker (no good/bad band) */
 .gauge { position: relative; height: 7px; border-radius: var(--radius-pill); background: var(--bg-2); margin-top: 12px; }

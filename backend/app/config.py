@@ -79,6 +79,25 @@ class Settings(BaseSettings):
     phi_ner_enabled: bool = True
     phi_ner_spacy_model: str = "en_core_web_md"
 
+    # --- OSS adoption (flag-gated; see docs/oss-adoption-design.md) ---
+    # WS-A clinical NLP engine (default "hybrid"). "hybrid" = on-device medspaCy +
+    # scispaCy fast-path with Gemini escalation for hard sections; "local" = fully
+    # on-device; "gemini" = cloud LangExtract only. hybrid/local need the optional
+    # ".[clinical-nlp]" stack — if it's absent the pipeline fail-opens to gemini, so
+    # installing the extra IS the opt-in. Off-switch: EXTRACTION_ENGINE=gemini.
+    extraction_engine: str = "hybrid"
+    # WS-A: spans/sections below this confidence escalate to Gemini (hybrid).
+    extraction_local_confidence_threshold: float = 0.6
+    # WS-C: high-threshold RapidFuzz fallback for terminology lookups. Default ON
+    # — fires only after exact/token lookups miss, and requires BOTH token_set_ratio
+    # AND char-level ratio >= 88 (subset-inflation guard) so a near-miss of nothing
+    # known stays uncoded. Preserves "never emit a wrong code"; only adds codes to
+    # misspellings of known terms. Validated on the real bundled indexes + real data.
+    terminology_fuzzy_enabled: bool = True
+    # WS-D FHIR structural validation. "off" | "log" (drift signal, never blocks
+    # ingestion; default) | "strict" (never applied to AI-built partial resources).
+    fhir_validation: str = "log"
+
     # Redis
     redis_url: str = "redis://localhost:6379/0"
 

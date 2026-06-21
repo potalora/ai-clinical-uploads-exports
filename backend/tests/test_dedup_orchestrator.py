@@ -43,8 +43,10 @@ class TestCompareRecordsUpgraded:
 
     def test_threshold_below_0_5_rejected(self):
         """Records with only code match (0.4) and no other signals should be at boundary."""
-        a = FakeRecord(code_value="R14.0", status="active", display_text="Record A")
-        b = FakeRecord(code_value="R14.0", status="resolved", display_text="Record B")
+        # Genuinely-distinct display_text (no shared tokens) so the token-set
+        # fuzzy matcher contributes nothing — code match (0.4) is the only signal.
+        a = FakeRecord(code_value="R14.0", status="active", display_text="Hypertension")
+        b = FakeRecord(code_value="R14.0", status="resolved", display_text="Diabetes")
         score, reasons = _compare_records(a, b)
         assert score == 0.4  # only code match
 
@@ -58,16 +60,18 @@ class TestCompareRecordsUpgraded:
 
     def test_source_section_no_bonus_when_different(self):
         """Different source_section does not add bonus."""
-        a = FakeRecord(code_value="R14.0", source_section="medications", display_text="Record A")
-        b = FakeRecord(code_value="R14.0", source_section="assessment", display_text="Record B")
+        # Distinct display_text so only the code match (0.4) contributes.
+        a = FakeRecord(code_value="R14.0", source_section="medications", display_text="Hypertension")
+        b = FakeRecord(code_value="R14.0", source_section="assessment", display_text="Diabetes")
         score, reasons = _compare_records(a, b)
         assert score == 0.4
         assert "section_match" not in reasons
 
     def test_source_section_no_bonus_when_none(self):
         """None source_section does not add bonus."""
-        a = FakeRecord(code_value="R14.0", source_section=None, display_text="Record A")
-        b = FakeRecord(code_value="R14.0", source_section="medications", display_text="Record B")
+        # Distinct display_text so only the code match (0.4) contributes.
+        a = FakeRecord(code_value="R14.0", source_section=None, display_text="Hypertension")
+        b = FakeRecord(code_value="R14.0", source_section="medications", display_text="Diabetes")
         score, reasons = _compare_records(a, b)
         assert score == 0.4
 
@@ -102,6 +106,40 @@ class TestApplyMerge:
 
         assert secondary.is_duplicate is True
         assert secondary.merged_into_id == primary_id
+
+
+class TestFuzzyMatch:
+    """RapidFuzz token-set matcher (replaces the homemade Jaccard word-overlap).
+
+    Contract relied on by ``_compare_records``: the score is in ``[0, 1]``;
+    near-identical strings clear the ``> 0.8`` ``text_fuzzy_match`` gate while
+    unrelated strings fall well below it. Token/dose reordering must NOT drop a
+    true match below the gate — the old Jaccard scored
+    "Metformin 500mg tablet" vs "metformin tablet 500 mg" at 0.4 and missed it.
+    """
+
+    def test_identical_strings_score_one(self):
+        assert _fuzzy_match("Abdominal distension", "Abdominal distension") == 1.0
+
+    def test_case_insensitive(self):
+        assert _fuzzy_match("Metformin", "metformin") == 1.0
+
+    def test_reordered_tokens_score_high(self):
+        # Identical token set, reordered — an order-insensitive matcher returns 1.0.
+        assert _fuzzy_match("type 2 diabetes mellitus", "diabetes mellitus type 2") == 1.0
+
+    def test_reordered_with_split_dose_clears_gate(self):
+        # Reordered + split dose token. The old Jaccard scored this 0.4 (a miss);
+        # token_set_ratio recognizes the shared tokens and clears the 0.8 gate.
+        assert _fuzzy_match("Metformin 500mg tablet", "metformin tablet 500 mg") > 0.8
+
+    def test_unrelated_strings_score_low(self):
+        assert _fuzzy_match("Lisinopril 10mg", "Atorvastatin 20mg") < 0.5
+        assert _fuzzy_match("Colonoscopy", "Chest X-ray") < 0.5
+
+    def test_distinct_labels_stay_below_gate(self):
+        # Distinct clinical labels must not be flagged as a fuzzy text match.
+        assert _fuzzy_match("Knee pain", "Abdominal distension") <= 0.8
 
 
 class TestDateDistancePenalty:

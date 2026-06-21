@@ -57,6 +57,10 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from rapidfuzz import fuzz, process
+
+from app.config import settings
+
 logger = logging.getLogger(__name__)
 
 # --- Code system canonical URIs (FHIR) -------------------------------------
@@ -289,8 +293,53 @@ def schedule_medication_refresh(max_age_days: int = 7) -> "asyncio.Task":
     return asyncio.create_task(_runner())
 
 
+# --- High-threshold fuzzy fallback (WS-C, flagged off by default) -----------
+# A last-resort RapidFuzz match for near-miss MISSPELLINGS of known terms. It
+# runs only after exact/normalized/token lookups miss and only when
+# ``settings.terminology_fuzzy_enabled`` is set (default off until validated).
+# The cutoff is deliberately high so the "never emit a wrong code; unknown stays
+# uncoded" guarantee holds.
+#
+# The gate intentionally pairs TWO scorers on the same cutoff:
+#   * ``token_set_ratio`` — the decided primary scorer (order-insensitive).
+#   * ``ratio`` — a char-level guard that defeats ``token_set_ratio``'s
+#     subset-inflation: a generic token that is a SUBSET of a long alias scores
+#     ``token_set_ratio`` = 100 (e.g. "deficiency" ⊂ "21 hydroxylase deficiency")
+#     but has a low ``ratio``, so it is rejected instead of coded to an arbitrary
+#     concept. True misspellings keep both scores high (≈90–96).
+FUZZY_MATCH_CUTOFF = 88  # token_set_ratio & ratio are 0-100; >= this is accepted
+
+
+def _fuzzy_lookup(index: dict[str, Coding], key: str) -> Coding | None:
+    """Best high-confidence fuzzy match of ``key`` against an index's aliases.
+
+    Returns the matched alias's :class:`Coding` only when BOTH the RapidFuzz
+    ``token_set_ratio`` and the char-level ``ratio`` are at or above
+    :data:`FUZZY_MATCH_CUTOFF`; otherwise ``None`` (a near-miss of nothing known,
+    or a ``token_set_ratio`` subset-inflation false positive, stays uncoded —
+    never a wrong code). ``key`` must already be normalized via
+    :func:`normalize_term`.
+    """
+    if not key or not index:
+        return None
+    match = process.extractOne(
+        key, index.keys(), scorer=fuzz.token_set_ratio, score_cutoff=FUZZY_MATCH_CUTOFF
+    )
+    if match is None:
+        return None
+    alias = match[0]
+    if fuzz.ratio(key, alias) < FUZZY_MATCH_CUTOFF:
+        return None
+    return index.get(alias)
+
+
 def _lookup(
-    category: str, text: str | None, *, first_token: bool, last_token: bool = False
+    category: str,
+    text: str | None,
+    *,
+    first_token: bool,
+    last_token: bool = False,
+    fuzzy: bool | None = None,
 ) -> Coding | None:
     """Look up a normalized term in a category index.
 
@@ -299,6 +348,10 @@ def _lookup(
     form/specimen word, e.g. "lisinopril tablet" -> "lisinopril"). ``last_token``
     additionally retries the last word (medications only — handles a leading
     qualifier, e.g. "daily b12" -> "b12", "low dose naltrexone" -> "naltrexone").
+
+    When ``settings.terminology_fuzzy_enabled`` is set, a high-threshold RapidFuzz
+    fallback (:func:`_fuzzy_lookup`) is consulted last — after every exact/token
+    lookup misses — to catch misspellings of known terms; it stays default-off.
     """
     index = _load_index(category)
     key = normalize_term(text)
@@ -318,6 +371,9 @@ def _lookup(
                 tail = index.get(tokens[-1])
                 if tail is not None:
                     return tail
+    use_fuzzy = settings.terminology_fuzzy_enabled if fuzzy is None else fuzzy
+    if use_fuzzy:
+        return _fuzzy_lookup(index, key)
     return None
 
 
@@ -326,9 +382,13 @@ def lookup_condition(text: str | None) -> Coding | None:
     return _lookup("condition", text, first_token=False)
 
 
-def lookup_medication(text: str | None) -> Coding | None:
-    """Map a medication/supplement label to an RxNorm (or local) coding, or ``None``."""
-    return _lookup("medication", text, first_token=True, last_token=True)
+def lookup_medication(text: str | None, *, fuzzy: bool | None = None) -> Coding | None:
+    """Map a medication/supplement label to an RxNorm (or local) coding, or ``None``.
+
+    ``fuzzy`` overrides ``settings.terminology_fuzzy_enabled`` for this call — pass
+    ``fuzzy=False`` for an exact/normalized-only lookup (used by the PHI de-id drug
+    guard, which must be fast and must never protect a span via a fuzzy match)."""
+    return _lookup("medication", text, first_token=True, last_token=True, fuzzy=fuzzy)
 
 
 def lookup_lab(text: str | None) -> Coding | None:

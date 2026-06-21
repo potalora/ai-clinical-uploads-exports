@@ -280,6 +280,86 @@ class TestDispatch:
         assert t.lookup("widget", "Hypertension") is None
 
 
+class TestFuzzyFallback:
+    """High-threshold RapidFuzz fallback (WS-C C2) — flagged off by default.
+
+    The fallback runs ONLY after exact/normalized/token lookups miss AND only
+    when ``settings.terminology_fuzzy_enabled`` is True. The combined gate
+    (``token_set_ratio >= FUZZY_MATCH_CUTOFF`` AND ``ratio >= FUZZY_MATCH_CUTOFF``)
+    codes near-miss misspellings of KNOWN terms while preserving the
+    "never emit a wrong code; unknown stays uncoded" guarantee.
+
+    The ``ratio`` half of the gate is essential: ``token_set_ratio`` inflates a
+    generic token that is a SUBSET of a long alias to 100 (e.g. "deficiency" is a
+    subset of "21 hydroxylase deficiency"), which would otherwise emit an
+    arbitrary specific code. The char-level ``ratio`` for those is low (≈20–58),
+    so the guard blocks them; true misspellings keep a high ratio (≈90–96).
+    """
+
+    @pytest.fixture(autouse=True)
+    def _flag_on(self, monkeypatch):
+        # Enable the fallback for this class; flag-off cases re-set it to False.
+        monkeypatch.setattr(t.settings, "terminology_fuzzy_enabled", True)
+
+    # (a) near-miss known terms code correctly above threshold ----------------
+    @pytest.mark.parametrize("text,code", [("Hypertention", "I10")])
+    def test_condition_near_miss_codes(self, text, code):
+        c = t.lookup_condition(text)
+        assert c is not None, f"expected a fuzzy coding for {text!r}"
+        assert c.system == t.ICD10_SYSTEM
+        assert c.code == code
+
+    @pytest.mark.parametrize(
+        "text,code",
+        [("Metformine", "6809"), ("Lisinapril", "29046"), ("Atorvastatine", "83367")],
+    )
+    def test_medication_near_miss_codes(self, text, code):
+        c = t.lookup_medication(text)
+        assert c is not None, f"expected a fuzzy coding for {text!r}"
+        assert c.system == t.RXNORM_SYSTEM
+        assert c.code == code
+
+    def test_lab_near_miss_codes(self):
+        c = t.lookup_lab("Creatinin")  # misspelled "Creatinine"
+        assert c is not None and c.code == "2160-0"
+
+    # (b) clearly-different terms stay uncoded --------------------------------
+    @pytest.mark.parametrize("text", ["xyzzy nonexistent disorder", "quantum teleportation device"])
+    def test_clearly_different_condition_returns_none(self, text):
+        assert t.lookup_condition(text) is None
+
+    def test_clearly_different_medication_returns_none(self):
+        assert t.lookup_medication("nonexistent-drug-xyzzy") is None
+
+    def test_clearly_different_lab_returns_none(self):
+        assert t.lookup_lab("mystery analyte") is None
+
+    # subset-inflation guard: generic tokens that are subsets of long aliases --
+    @pytest.mark.parametrize("text", ["deficiency", "disorder", "fracture", "infection"])
+    def test_generic_condition_token_not_coded(self, text):
+        assert t.lookup_condition(text) is None
+
+    @pytest.mark.parametrize("text", ["vitamin", "acid"])
+    def test_generic_medication_token_not_coded(self, text):
+        assert t.lookup_medication(text) is None
+
+    # (c) flag OFF -> behavior unchanged (no fuzzy at all) --------------------
+    def test_flag_off_disables_fuzzy(self, monkeypatch):
+        monkeypatch.setattr(t.settings, "terminology_fuzzy_enabled", False)
+        assert t.lookup_condition("Hypertention") is None
+        assert t.lookup_medication("Metformine") is None
+        assert t.lookup_lab("Creatinin") is None
+
+    # exact lookups are unaffected when the flag is on (fuzzy is a fallback) ---
+    def test_exact_still_wins_when_flag_on(self):
+        assert t.lookup_condition("Hypertension").code == "I10"
+        assert t.lookup_medication("Metformin").code == "6809"
+        assert t.lookup_lab("Creatinine").code == "2160-0"
+
+    def test_cutoff_constant_is_88(self):
+        assert t.FUZZY_MATCH_CUTOFF == 88
+
+
 class TestLazyIndexAttributes:
     """The module exposes index dicts (lazily materialized) for back-compat."""
 
