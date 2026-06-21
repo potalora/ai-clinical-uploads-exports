@@ -1,5 +1,6 @@
 # backend/app/services/ai/llm/anthropic.py
 from __future__ import annotations
+import base64
 import logging
 from anthropic import (
     APIConnectionError, APITimeoutError, AsyncAnthropic, AuthenticationError,
@@ -7,14 +8,35 @@ from anthropic import (
 )
 from app.services.ai.llm.base import LLMProvider
 from app.services.ai.llm.types import (
-    Capabilities, LLMAuthError, LLMBadRequestError, LLMError, LLMRateLimitError,
-    LLMRequest, LLMResponse, LLMResponseError, LLMTimeoutError, LLMUsage,
+    Capabilities, DocumentPart, ImagePart, LLMAuthError, LLMBadRequestError, LLMError,
+    LLMRateLimitError, LLMRequest, LLMResponse, LLMResponseError, LLMTimeoutError,
+    LLMUsage, TextPart, as_parts,
 )
 
 logger = logging.getLogger(__name__)
 _STOP = {"end_turn": "stop", "stop_sequence": "stop", "max_tokens": "length"}
 _JSON_NUDGE = ("\n\nReturn ONLY a single valid JSON value. No prose, no markdown "
                "fences. Begin your reply with the opening brace.")
+
+
+def _build_content(content) -> str | list[dict]:
+    """Map message content to Anthropic blocks; keep all-text content as a plain string."""
+    parts = as_parts(content)
+    if len(parts) == 1 and isinstance(parts[0], TextPart):
+        return parts[0].text
+    blocks: list[dict] = []
+    for part in parts:
+        if isinstance(part, TextPart):
+            blocks.append({"type": "text", "text": part.text})
+        elif isinstance(part, ImagePart):
+            b64 = base64.standard_b64encode(part.data).decode()
+            blocks.append({"type": "image", "source": {
+                "type": "base64", "media_type": part.mime, "data": b64}})
+        elif isinstance(part, DocumentPart):
+            b64 = base64.standard_b64encode(part.data).decode()
+            blocks.append({"type": "document", "source": {
+                "type": "base64", "media_type": "application/pdf", "data": b64}})
+    return blocks
 
 
 class AnthropicProvider(LLMProvider):
@@ -34,7 +56,8 @@ class AnthropicProvider(LLMProvider):
             raise LLMAuthError("ANTHROPIC_API_KEY is not configured")
         system = request.system or ""
         prefilled = False
-        messages = [{"role": m.role, "content": m.content} for m in request.messages]
+        messages = [{"role": m.role, "content": _build_content(m.content)}
+                    for m in request.messages]
         if request.json_mode:
             system = (system + _JSON_NUDGE).strip()
             messages.append({"role": "assistant", "content": "{"})

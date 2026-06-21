@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import logging
 
 from openai import (
@@ -14,19 +15,65 @@ from openai import (
 from app.services.ai.llm.base import LLMProvider
 from app.services.ai.llm.types import (
     Capabilities,
+    DocumentPart,
+    ImagePart,
     LLMAuthError,
     LLMBadRequestError,
-    LLMError,
+    LLMMessage,
     LLMRateLimitError,
     LLMRequest,
     LLMResponse,
     LLMResponseError,
     LLMTimeoutError,
     LLMUsage,
+    TextPart,
+    as_parts,
 )
 
 logger = logging.getLogger(__name__)
 _FINISH = {"stop": "stop", "length": "length", "content_filter": "content_filter"}
+
+
+def _build_content(message: LLMMessage) -> str | list[dict]:
+    """Map a message's content to the OpenAI chat shape.
+
+    All-text content (a plain ``str`` or a single ``TextPart``) stays a plain
+    string so text-only calls are byte-identical to today's behavior. Image and
+    document parts produce the multimodal array shape.
+
+    Args:
+        message: The message whose content is mapped.
+
+    Returns:
+        A plain string for all-text content, else a list of content-part dicts.
+    """
+    parts = as_parts(message.content)
+    if len(parts) == 1 and isinstance(parts[0], TextPart):
+        return parts[0].text
+    content: list[dict] = []
+    for part in parts:
+        if isinstance(part, TextPart):
+            content.append({"type": "text", "text": part.text})
+        elif isinstance(part, ImagePart):
+            b64 = base64.standard_b64encode(part.data).decode()
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{part.mime};base64,{b64}"},
+                }
+            )
+        elif isinstance(part, DocumentPart):
+            b64 = base64.standard_b64encode(part.data).decode()
+            content.append(
+                {
+                    "type": "file",
+                    "file": {
+                        "filename": "document.pdf",
+                        "file_data": f"data:application/pdf;base64,{b64}",
+                    },
+                }
+            )
+    return content
 
 
 class OpenAICompatProvider(LLMProvider):
@@ -50,6 +97,40 @@ class OpenAICompatProvider(LLMProvider):
         self._client = AsyncOpenAI(api_key=api_key or "not-needed", base_url=base_url)
         self._model_default = model_default
 
+    async def _create_adaptive(self, kwargs: dict):
+        """Create a chat completion, adapting params that some models reject.
+
+        Newer OpenAI models (gpt-5 / o-series) require ``max_completion_tokens``
+        instead of ``max_tokens`` and only accept the default temperature; some
+        local models reject ``response_format``. On a ``BadRequest`` that names one
+        of these, surgically adjust that single param and retry (bounded), so the
+        same code serves old and new models without per-model config.
+        """
+        for _ in range(4):
+            try:
+                return await self._client.chat.completions.create(**kwargs)
+            except AuthenticationError as e:
+                raise LLMAuthError(str(e)) from e
+            except RateLimitError as e:
+                raise LLMRateLimitError(str(e)) from e
+            except (APITimeoutError, APIConnectionError) as e:
+                raise LLMTimeoutError(str(e)) from e
+            except BadRequestError as e:
+                msg = str(e).lower()
+                if "max_completion_tokens" in msg and "max_tokens" in kwargs:
+                    kwargs["max_completion_tokens"] = kwargs.pop("max_tokens")
+                    continue
+                if "temperature" in msg and "temperature" in kwargs:
+                    kwargs.pop("temperature")
+                    continue
+                if "response_format" in msg and "response_format" in kwargs:
+                    kwargs.pop("response_format")
+                    continue
+                raise LLMBadRequestError(str(e)) from e
+            except Exception as e:  # noqa: BLE001 - normalized below
+                raise LLMResponseError(str(e)) from e
+        raise LLMBadRequestError("exhausted OpenAI parameter fallbacks")
+
     async def complete(self, request: LLMRequest) -> LLMResponse:
         """Run a unary chat completion and return a normalized response.
 
@@ -65,7 +146,9 @@ class OpenAICompatProvider(LLMProvider):
         messages: list[dict] = []
         if request.system:
             messages.append({"role": "system", "content": request.system})
-        messages.extend({"role": m.role, "content": m.content} for m in request.messages)
+        messages.extend(
+            {"role": m.role, "content": _build_content(m)} for m in request.messages
+        )
         kwargs: dict = {
             "model": request.model or self._model_default,
             "messages": messages,
@@ -75,29 +158,7 @@ class OpenAICompatProvider(LLMProvider):
             kwargs["temperature"] = request.temperature
         if request.json_mode:
             kwargs["response_format"] = {"type": "json_object"}
-        try:
-            resp = await self._client.chat.completions.create(**kwargs)
-        except AuthenticationError as e:
-            raise LLMAuthError(str(e)) from e
-        except RateLimitError as e:
-            raise LLMRateLimitError(str(e)) from e
-        except (APITimeoutError, APIConnectionError) as e:
-            raise LLMTimeoutError(str(e)) from e
-        except BadRequestError as e:
-            # Some local models reject json_mode or temperature; retry once without them.
-            if request.json_mode or request.temperature is not None:
-                kwargs.pop("response_format", None)
-                kwargs.pop("temperature", None)
-                try:
-                    resp = await self._client.chat.completions.create(**kwargs)
-                except Exception as e2:
-                    raise LLMBadRequestError(str(e2)) from e2
-            else:
-                raise LLMBadRequestError(str(e)) from e
-        except LLMError:
-            raise
-        except Exception as e:
-            raise LLMResponseError(str(e)) from e
+        resp = await self._create_adaptive(kwargs)
         choice = resp.choices[0]
         text = choice.message.content or ""
         finish = _FINISH.get(choice.finish_reason or "", "other")
