@@ -338,16 +338,19 @@ def test_phi_scrubber_word_boundary_short_names():
 
 
 def test_phi_scrubber_generalizes_slash_dates():
-    """MM/DD/YYYY dates are generalized to MM/YYYY (day dropped), matching the
-    'Month DD, YYYY' handling — a lab report's DOB/collection dates must not leak.
+    """MM/DD/YYYY dates are generalized to the YEAR ONLY (HIPAA Safe Harbor —
+    month and day are both impermissible date elements). A lab report's
+    DOB/collection dates must not leak the day or month.
     (enable_ner=False isolates the regex layer.)"""
     from app.services.ai.phi_scrubber import scrub_phi
     text = "DOB: 07/31/1996  Collected: 02/16/2026  Reported: 2/3/2026"
     scrubbed, report = scrub_phi(text, enable_ner=False)
     assert "07/31/1996" not in scrubbed
-    assert "07/1996" in scrubbed
-    assert "02/2026" in scrubbed
-    assert "2/2026" in scrubbed
+    # Year survives; month + day are dropped (no MM/YYYY remnant).
+    assert "1996" in scrubbed
+    assert "2026" in scrubbed
+    assert "07/1996" not in scrubbed
+    assert "02/2026" not in scrubbed
     assert report.get("dates_generalized", 0) >= 3
 
 
