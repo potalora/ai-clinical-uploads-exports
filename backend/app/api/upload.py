@@ -1260,7 +1260,32 @@ def _build_record_dicts(
     return built
 
 
-async def _autoconfirm_and_finish(db, upload, upload_id, user_id, unique_entities, parsed_doc):
+def _prefer_document_date(built_records, document_date) -> None:
+    """A1: prefer the real document date over the de-identified entity dates.
+
+    The de-id pass generalizes dates to year-only BEFORE entity extraction, so the
+    dates the LLM returns (and thus ``record_dict["effective_date"]``) collapse to
+    year boundaries (e.g. a 10/21/2020 report lands on 2020-01-01). ``document_date``
+    is recovered from the ORIGINAL, pre-de-id text — it is internal record data,
+    never sent to an LLM, so using the real date does not weaken de-identification.
+    Applied to every date-eligible record; dateless types (family_history) are left
+    untouched. No-op when no real document date was found.
+    """
+    if document_date is None:
+        return
+    from app.services.extraction.entity_to_fhir import _DOCUMENT_DATE_INELIGIBLE
+
+    for entity, record_dict in built_records:
+        if record_dict is None:
+            continue
+        if getattr(entity, "entity_class", None) in _DOCUMENT_DATE_INELIGIBLE:
+            continue
+        record_dict["effective_date"] = document_date
+
+
+async def _autoconfirm_and_finish(
+    db, upload, upload_id, user_id, unique_entities, parsed_doc, original_text=None
+):
     """Auto-confirm extracted entities into HealthRecords and finalize the upload.
 
     Shared across engines: ensures a patient exists, maps entities → FHIR records,
@@ -1268,13 +1293,20 @@ async def _autoconfirm_and_finish(db, upload, upload_id, user_id, unique_entitie
     scan. Lifted verbatim from the prior inline tail.
     """
     from app.services.extraction.entity_to_fhir import (
+        _find_date_in_text,
         resolve_document_date,
         resolve_document_provider,
     )
 
     patient = await _ensure_patient(db, user_id)
 
-    document_date = resolve_document_date(unique_entities, parsed_doc.primary_visit_date)
+    # A1: recover the real document date from the ORIGINAL (pre-de-id) text. The
+    # entity-derived date comes from de-identified (year-only) text and is
+    # unreliable for precision; prefer the real date when the original text has one.
+    real_document_date = _find_date_in_text(original_text) if original_text else None
+    document_date = real_document_date or resolve_document_date(
+        unique_entities, parsed_doc.primary_visit_date
+    )
     document_provider = resolve_document_provider(unique_entities)
 
     if patient:  # always true — _ensure_patient never returns None (defensive)
@@ -1294,6 +1326,10 @@ async def _autoconfirm_and_finish(db, upload, upload_id, user_id, unique_entitie
             unique_entities, user_id, patient.id, upload_id,
             document_date, document_provider,
         )
+
+        # A1: replace the de-identified (year-only) entity dates with the real
+        # document date recovered from the original text (eligible records only).
+        _prefer_document_date(built_records, real_document_date)
 
         for entity, record_dict in built_records:
             if record_dict is None:
@@ -1487,7 +1523,10 @@ async def _process_unstructured(upload_id: UUID, file_path: Path, user_id: UUID)
                 for e in unique_entities
             ]
             await db.commit()
-            await _autoconfirm_and_finish(db, upload, upload_id, user_id, unique_entities, parsed_doc)
+            await _autoconfirm_and_finish(
+                db, upload, upload_id, user_id, unique_entities, parsed_doc,
+                original_text=text,
+            )
             return
 
 
